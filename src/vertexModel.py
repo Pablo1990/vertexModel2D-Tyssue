@@ -1,4 +1,5 @@
 from tyssue import config
+import auxFunctions
 
 def runModel(cellmap_original, geom_original, model_original, history_original, face_elasticity,
                  prefered_area, lower_line_tension, higher_line_tension, endTime):
@@ -15,7 +16,7 @@ def runModel(cellmap_original, geom_original, model_original, history_original, 
     cellmap_original.face_df["perimeter_elasticity"] = 0
     cellmap_original.face_df["contractility"] = 0
     
-    cellmap_original = line_tension_range(cellmap_original, lower_line_tension, higher_line_tension)
+    cellmap_original = auxFunctions.line_tension_range(cellmap_original, lower_line_tension, higher_line_tension)
 
     
     

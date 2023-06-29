@@ -5,7 +5,6 @@ import pandas as pd
 import numpy as np
 import json
 import matplotlib.pylab as plt
-%matplotlib inline
 import ipyvolume as ipv
 import copy
 from IPython.display import Image
@@ -50,6 +49,7 @@ geom_original.update_all(cellmap_original)
 
 history_original = History(cellmap_original, extra_cols={"edge":["dx", "dy"]})
 
+## RUN
 [cellmap_H, geom_H, model_H, history_H] = vertexModel.runModel(cellmap_original, geom_original, model_original, history_original, 
                                                        face_elasticity = 10, prefered_area = 0.6, lower_line_tension = 1, 
                                                        higher_line_tension = 100, endTime = 30)
