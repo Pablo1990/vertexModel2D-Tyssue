@@ -39,9 +39,22 @@ import vertexModel
 
 #### Definition of the sheet
 geom_original  = SheetGeometry # This may need to change
+
+## https://tyssue.readthedocs.io/en/latest/_modules/tyssue/dynamics/effectors.html
+# 
 model_original = model_factory([    
     effectors.FaceAreaElasticity,
     effectors.LineTension
+    #effectors.LengthElasticity
+    #effectors.PerimeterElasticity
+    #effectors.FaceVolumeElasticity
+    #effectors.CellAreaElasticity
+    #effectors.CellVolumeElasticity
+    #effectors.LumenVolumeElasticity
+    #effectors.LineTension
+    #effectors.FaceContractility
+    effectors.BarrierElasticity
+    #effectors.LineViscosity
     ]) 
 cellmap_original = Sheet.planar_sheet_3d('cellmap_original', 20, 20, 1, 1) # This may need to change
 cellmap_original.sanitize ( trim_borders=True, order_edges=True )
