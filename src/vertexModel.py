@@ -1,15 +1,19 @@
 from tyssue import config
-import auxFunctions
-import inputMechanicalParameters
+from tyssue import PlanarGeometry, Sheet, History
+from tyssue.draw import sheet_view
+from tyssue.dynamics import effectors, model_factory
+from tyssue.solvers.viscous import EulerSolver
 
-def initialize(area_elasticity, prefered_area, lower_line_tension, higher_line_tension):
+import src.inputMechanicalParameters as inputMechanicalParameters
+
+def initialize():
     ## Defining energy contributions
     # https://tyssue.readthedocs.io/en/latest/_modules/tyssue/dynamics/effectors.html
-    model_init = model_factory([    
+    energyContributions_model = model_factory([    
         effectors.FaceAreaElasticity,
         effectors.LineTension,
         #effectors.LengthElasticity,
-        effectors.PerimeterElasticity
+        effectors.PerimeterElasticity,
         #effectors.CellAreaElasticity,
         #effectors.FaceContractility,
         #effectors.BarrierElasticity
@@ -22,42 +26,42 @@ def initialize(area_elasticity, prefered_area, lower_line_tension, higher_line_t
 
     # noise = 0 -> hexagonal pattern
     # noise = 1 -> random voronoi
-    cellmap_init = Sheet.planar_sheet_2d('tissue', numCellRows, numCellRows, 1, 1, noise=noiseCellShape)
-    cellmap_init.remove(cellmap_init.cut_out([[1, numCellRows], [1, numCellRows]]), trim_borders=True)
-    cellmap_init.reset_index()
-    cellmap_init.reset_topo()
+    cellMap = Sheet.planar_sheet_2d('tissue', numCellRows, numCellRows, 1, 1, noise=noiseCellShape)
+    cellMap.remove(cellMap.cut_out([[1, numCellRows], [1, numCellRows]]), trim_borders=True)
+    cellMap.reset_index()
+    cellMap.reset_topo()
 
     ## Definition of the geometry of the sheet
     # PlanarGeometry: Geometry methods for 2D planar cell arangements
     # SheetGeometry: Geometry definitions for 2D sheets in 3D
     # BulkGeometry: Geometry functions for 3D cell arangements
-    geom_init  = PlanarGeometry
+    geom  = PlanarGeometry
 
     # Update geometry with the patch
-    geom_init.update_all(cellmap_init)
+    geom.update_all(cellMap)
 
     # Visualize the sheet
-    fig, ax = sheet_view(cellmap_init, mode="quick")
+    fig, ax = sheet_view(cellMap, mode="quick")
 
     ## Connect cells with energy contributions
-    cellmap_init.update_specs(model_init.specs)
+    cellMap.update_specs(energyContributions_model.specs)
+
+    return [cellMap, geom, energyContributions_model]
+
+
+def solve(cellMap, geom, energyContributions_model, endTime):
 
     ## Init history object
     # It gives a warning when using: ', extra_cols={"edge":["dx", "dy"]}'
     #TODO: WHAT TO USE INSTEAD?
-    history_init = History(cellmap_init)
-
-    return [cellmap_init]
-
-
-def solve(cellmap, history_original, endTime):
+    history_cellMap = History(cellMap)
 
     ## Find the minima
-    solver1 = EulerSolver(cellmap, geom_original, model_original, history=history_original, auto_reconnect=True)
+    solver1 = EulerSolver(cellMap, geom, energyContributions_model, history=history_cellMap, auto_reconnect=True)
     res1 = solver1.solve(tf=endTime, dt=0.05)
 
     ## Deep copy to return it and being able to modify maintaining the previous one
-    cellmap_new = copy.deepcopy(cellmap)
-    history_new = copy.deepcopy(history_original)
+    cellMap_new = copy.deepcopy(cellMap)
+    history_new = copy.deepcopy(history_cellMap)
 
-    return [cellmap_new, geom_new, model_new, history_new]
+    return [cellMap_new, geom_new, energyContributions_model, history_new]
