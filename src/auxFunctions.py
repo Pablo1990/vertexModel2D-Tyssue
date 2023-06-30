@@ -1,6 +1,7 @@
 import pathlib
 from tyssue import History
 from tyssue.draw.plt_draw import quick_edge_draw
+import matplotlib.pylab as plt
 
 def line_tension_range(cellmap, lower_line_tension, higher_line_tension):
     for edge in range(len(cellmap.edge_df)):
@@ -55,7 +56,7 @@ def create_frames(
     else:
         start, stop = interval[0], interval[1]
 
-    for i, (t, sheet) in enumerate(History.time_stamps(start, stop, num_frames)):
+    for i, (t, sheet) in enumerate(history.browse(start, stop, num_frames)):
         try:
             fig, ax = draw_func(sheet, **draw_kwds)
         except Exception as e:

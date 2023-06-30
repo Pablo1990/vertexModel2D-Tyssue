@@ -11,6 +11,7 @@ from scipy import optimize
 ##### Own functions
 import src.vertexModel as vertexModel
 import src.inputMechanicalParameters as inputMechanicalParameters
+import src.auxFunctions as auxFunctions
 
 
 #### Initialize Model
@@ -24,3 +25,7 @@ energyContributions_model.compute_energy(cellmap_init)
 
 ## RUN
 [cellmap_H, geom, model_H, history_H] = vertexModel.solve(cellmap_init, geom, energyContributions_model, endTime = 30)
+
+
+
+create_frames(history_original, './results')
