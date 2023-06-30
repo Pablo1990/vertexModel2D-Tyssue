@@ -3,6 +3,7 @@ from tyssue import PlanarGeometry, Sheet, History
 from tyssue.draw import sheet_view
 from tyssue.dynamics import effectors, model_factory
 from tyssue.solvers.viscous import EulerSolver
+import copy
 
 import src.inputMechanicalParameters as inputMechanicalParameters
 
@@ -64,4 +65,4 @@ def solve(cellMap, geom, energyContributions_model, endTime):
     cellMap_new = copy.deepcopy(cellMap)
     history_new = copy.deepcopy(history_cellMap)
 
-    return [cellMap_new, geom_new, energyContributions_model, history_new]
+    return [cellMap_new, geom, energyContributions_model, history_new]
