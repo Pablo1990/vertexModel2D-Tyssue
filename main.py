@@ -24,8 +24,8 @@ cellmap_init = inputMechanicalParameters.update(cellmap_init)
 energyContributions_model.compute_energy(cellmap_init)
 
 ## RUN
-[cellmap_H, geom, model_H, history_H] = vertexModel.solve(cellmap_init, geom, energyContributions_model, endTime = 1)
+[cellmap_H, geom, model_H, history_H] = vertexModel.solveEuler(cellmap_init, geom, energyContributions_model, endTime = 10)
 
 
-
-create_frames(history_original, './results')
+auxFunctions.create_frames(history_H, './results')
+auxFunctions.exportToMesh(history_H, './results')

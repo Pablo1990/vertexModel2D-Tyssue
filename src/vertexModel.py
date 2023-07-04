@@ -1,5 +1,7 @@
-from tyssue import config
 from tyssue import PlanarGeometry, Sheet, History
+from tyssue import config
+from tyssue.behaviors import EventManager
+from tyssue.behaviors.sheet import basic_events
 from tyssue.draw import sheet_view
 from tyssue.dynamics import effectors, model_factory
 from tyssue.solvers.viscous import EulerSolver
@@ -57,13 +59,10 @@ def solveEuler(cellMap, geom, energyContributions_model, endTime):
     history_cellMap = History(cellMap)
 
     ## Manager Initialization
-    manager = EventManager("manager", )
-    manager.append
+    manager = EventManager("face", )
+    manager.append(basic_events.reconnect)
 
-    #type1_transition(cellMap, edge01, *, remove_tri_faces=True, multiplier=1.5)
-    #resolve_t1s(cellMap, geom, model, solver, max_iter=60)
-
-    ## Find the minima
+    ## Init solver
     solver1 = EulerSolver(cellMap, 
         geom, 
         energyContributions_model,
@@ -74,6 +73,11 @@ def solveEuler(cellMap, geom, energyContributions_model, endTime):
             ), 
         history=history_cellMap, 
         auto_reconnect=True)
+
+    manager.update()
+
+    ## Run the solver
+    res1 = solver1.solve(tf=endTime, dt=1)
 
     ## Deep copy to return it and being able to modify maintaining the previous one
     cellMap_new = copy.deepcopy(cellMap)
@@ -93,11 +97,10 @@ def solveStepByStep(cellMap, geom, energyContributions_model, endTime):
     ## Find the minima in different timeSteps:
     # https://tyssue.readthedocs.io/en/latest/notebooks/07-EventManager.html
     t = 0
-    stop = 30
 
     history_cellMap = history_cellMap(cellMap)
 
-    while manager.current and t < stop:
+    while manager.current and t < endTime:
         # Execute the event in the current list
         manager.execute(cellMap)
         t += 1
