@@ -153,3 +153,7 @@ cython_debug/
 Data analysis/*
 .DS_Store
 *.png
+
+*.obj
+
+*.vtk

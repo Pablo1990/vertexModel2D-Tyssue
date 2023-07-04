@@ -2,6 +2,8 @@ import pathlib
 from tyssue import History
 from tyssue.draw.plt_draw import quick_edge_draw
 import matplotlib.pylab as plt
+from tyssue.io import obj
+
 
 def line_tension_range(cellmap, lower_line_tension, higher_line_tension):
     for edge in range(len(cellmap.edge_df)):
@@ -66,3 +68,7 @@ def create_frames(
             ax.set(xlim=xlim, ylim=ylim)
         fig.savefig(graph_dir / f"movie_{i:04d}.png")
         plt.close(fig)
+
+def exportToMesh(history):
+    """Exporting each timepoint to mesh"""
+    for i, (t, sheet) in enumerate(history.browse(None, None, None)):
