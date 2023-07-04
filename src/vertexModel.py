@@ -7,12 +7,15 @@ from tyssue.dynamics import effectors, model_factory
 from tyssue.solvers.viscous import EulerSolver
 import copy
 
+
+import src.brownianMotion as brownianMotion
 import src.inputMechanicalParameters as inputMechanicalParameters
 
 def initialize():
     ## Defining energy contributions
     # https://tyssue.readthedocs.io/en/latest/_modules/tyssue/dynamics/effectors.html
-    energyContributions_model = model_factory([    
+    energyContributions_model = model_factory([
+        brownianMotion.BrownianMotion,  
         effectors.FaceAreaElasticity,
         effectors.LineTension,
         #effectors.LengthElasticity,
@@ -58,6 +61,9 @@ def initialize():
 
     return [cellMap, geom, energyContributions_model]
 
+def on_topo_change(sheet):
+    print('Topology changed!\n')
+
 
 def solveEuler(cellMap, geom, energyContributions_model, endTime):
 
@@ -67,7 +73,7 @@ def solveEuler(cellMap, geom, energyContributions_model, endTime):
 
     ## Manager Initialization
     manager = EventManager("face", )
-    manager.append(basic_events.reconnect)
+    #manager.append(basic_events.auto_reconnect)
 
     ## Init solver
     solver1 = EulerSolver(cellMap, 
@@ -84,7 +90,8 @@ def solveEuler(cellMap, geom, energyContributions_model, endTime):
     manager.update()
 
     ## Run the solver
-    res1 = solver1.solve(tf=endTime, dt=1)
+    res1 = solver1.solve(tf=endTime, dt=1, on_topo_change=on_topo_change,
+                   topo_change_args=(solver1.eptm,))
 
     ## Deep copy to return it and being able to modify maintaining the previous one
     cellMap_new = copy.deepcopy(cellMap)
