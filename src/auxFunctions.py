@@ -60,6 +60,7 @@ def create_frames(
     for i, (t, sheet) in enumerate(history.browse(start, stop, num_frames)):
         try:
             fig, ax = draw_func(sheet, **draw_kwds)
+            fig.set_size_inches(20,20)
         except Exception as e:
             print("Droped frame {i}")
 
