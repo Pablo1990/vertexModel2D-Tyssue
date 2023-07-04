@@ -21,6 +21,7 @@ def initialize():
         #effectors.FaceContractility,
         #effectors.BarrierElasticity
         #effectors.LineViscosity
+        #effectors.BorderElasticity
         ])
 
     ## Size of the patch
@@ -29,7 +30,13 @@ def initialize():
 
     # noise = 0 -> hexagonal pattern
     # noise = 1 -> random voronoi
-    cellMap = Sheet.planar_sheet_2d('tissue', numCellRows, numCellRows, 1, 1, noise=noiseCellShape)
+    cellMap = Sheet.planar_sheet_2d('tissue', 
+        nx=numCellRows, # approximate number of cells on the x axis
+        ny=numCellRows, # approximate number of cells along the y axis
+        distx=1, # distance between 2 cells along x
+        disty=1, # distance between 2 cells along y
+        noise=noiseCellShape)
+
     cellMap.remove(cellMap.cut_out([[1, numCellRows], [1, numCellRows]]), trim_borders=True)
     cellMap.reset_index()
     cellMap.reset_topo()
