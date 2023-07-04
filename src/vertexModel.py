@@ -50,16 +50,63 @@ def initialize():
     return [cellMap, geom, energyContributions_model]
 
 
-def solve(cellMap, geom, energyContributions_model, endTime):
+def solveEuler(cellMap, geom, energyContributions_model, endTime):
 
     ## Init history object
-    # It gives a warning when using: ', extra_cols={"edge":["dx", "dy"]}'
-    #TODO: WHAT TO USE INSTEAD?
+    # The History object records all the time steps
     history_cellMap = History(cellMap)
 
+    ## Manager Initialization
+    manager = EventManager("manager", )
+    manager.append
+
+    #type1_transition(cellMap, edge01, *, remove_tri_faces=True, multiplier=1.5)
+    #resolve_t1s(cellMap, geom, model, solver, max_iter=60)
+
     ## Find the minima
-    solver1 = EulerSolver(cellMap, geom, energyContributions_model, history=history_cellMap, auto_reconnect=True)
-    res1 = solver1.solve(tf=endTime, dt=0.05)
+    solver1 = EulerSolver(cellMap, 
+        geom, 
+        energyContributions_model,
+        manager=manager,
+        bounds=(
+            -cellMap.edge_df.length.median()/10,
+            cellMap.edge_df.length.median()/10
+            ), 
+        history=history_cellMap, 
+        auto_reconnect=True)
+
+    ## Deep copy to return it and being able to modify maintaining the previous one
+    cellMap_new = copy.deepcopy(cellMap)
+    history_new = copy.deepcopy(history_cellMap)
+
+    return [cellMap_new, geom, energyContributions_model, history_new]
+
+def solveStepByStep(cellMap, geom, energyContributions_model, endTime):
+
+    ## Init history object
+    # The History object records all the time steps
+    history_cellMap = History(cellMap)
+
+    ## Manager Initialization
+    manager = EventManager("manager", )
+
+    ## Find the minima in different timeSteps:
+    # https://tyssue.readthedocs.io/en/latest/notebooks/07-EventManager.html
+    t = 0
+    stop = 30
+
+    history_cellMap = history_cellMap(cellMap)
+
+    while manager.current and t < stop:
+        # Execute the event in the current list
+        manager.execute(cellMap)
+        t += 1
+        cellMap.reset_index(order=True)
+        # Find energy min
+        res = solver.resolve_t1s(cellMap, geom, energyContributions_model)
+        history_cellMap.record()
+        # Switch event list from the next list to the current list
+        manager.update()
 
     ## Deep copy to return it and being able to modify maintaining the previous one
     cellMap_new = copy.deepcopy(cellMap)
