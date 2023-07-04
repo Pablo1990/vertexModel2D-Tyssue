@@ -3,11 +3,12 @@ from tyssue.draw.plt_draw import quick_edge_draw
 from tyssue.io import obj
 import matplotlib.pylab as plt
 import pathlib
+import random
 
 def line_tension_range(cellmap, lower_line_tension, higher_line_tension):
     for edge in range(len(cellmap.edge_df)):
-        newValue = random.randrange(lower_line_tension, higher_line_tension)/100
-        cellmap.edge_df['line_tension'][edge] = newValue         
+        newValue = random.uniform(lower_line_tension, higher_line_tension)
+        cellmap.edge_df.loc[edge, 'line_tension'] = newValue 
     return cellmap
 
 def create_frames(
