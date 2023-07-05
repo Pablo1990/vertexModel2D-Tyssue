@@ -29,7 +29,7 @@ def initialize():
 
     ## Size of the patch
     numCellRows = 40
-    noiseCellShape = 0.3
+    noiseCellShape = 0.2
 
     # noise = 0 -> hexagonal pattern
     # noise = 1 -> random voronoi
