@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import random
 import sys
+import tyssue.io.hdf5 as hdf5
 from IPython.display import Image
 from scipy import optimize
 
@@ -27,5 +28,6 @@ energyContributions_model.compute_energy(cellmap_init)
 [cellmap_H, geom, model_H, history_H] = vertexModel.solveEuler(cellmap_init, geom, energyContributions_model, endTime = 100)
 
 
-auxFunctions.create_frames(history_H, './results')
-auxFunctions.exportToMesh(history_H, './results')
+#fig, ax = sheet_view(cellmap_H, ['y', 'x'], edge={"color":1, 'colormap': 'Greys'})
+auxFunctions.create_frames(history_H, './results', edge={'color':'black'})
+#auxFunctions.exportToMesh(history_H, './results')

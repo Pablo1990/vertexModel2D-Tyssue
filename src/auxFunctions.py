@@ -1,4 +1,5 @@
 from tyssue import History
+from tyssue.draw import sheet_view
 from tyssue.draw.plt_draw import quick_edge_draw
 from tyssue.io import obj
 import matplotlib.pylab as plt
@@ -62,13 +63,17 @@ def create_frames(
         try:
             fig, ax = draw_func(sheet, **draw_kwds)
             fig.set_size_inches(20,20)
+
+            if isinstance(ax, plt.Axes) and margin >= 0:
+                ax.set(xlim=xlim, ylim=ylim)
+
+            plt.axis('off')
+            fig.savefig(graph_dir / f"movie_{i:04d}.png")
         except Exception as e:
             print("Droped frame {i}")
+            print(e)
 
-        if isinstance(ax, plt.Axes) and margin >= 0:
-            ax.set(xlim=xlim, ylim=ylim)
-        fig.savefig(graph_dir / f"movie_{i:04d}.png")
-        plt.close(fig)
+        plt.close()
 
 def exportToMesh(history, dir):
     """Exporting each timepoint to mesh"""

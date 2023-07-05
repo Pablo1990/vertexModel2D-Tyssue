@@ -62,7 +62,7 @@ def initialize():
     return [cellMap, geom, energyContributions_model]
 
 def on_topo_change(sheet):
-    print('Topology changed!\n')
+    print('Topology changed!')
 
 
 def solveEuler(cellMap, geom, energyContributions_model, endTime):
