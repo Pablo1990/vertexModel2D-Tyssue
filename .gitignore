@@ -157,3 +157,5 @@ Data analysis/*
 *.obj
 
 *.vtk
+
+results/
