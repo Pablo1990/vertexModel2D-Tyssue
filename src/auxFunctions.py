@@ -37,12 +37,6 @@ def create_frames(
          if margin is -1, let the draw function decide
     **draw_kwds are passed to the drawing function
     """
-    if draw_func is None:
-        if draw_kwds.get("mode") in ("quick", None):
-            draw_func = quick_edge_draw
-        else:
-            draw_func = sheet_view
-
     graph_dir = pathlib.Path(output)
     graph_dir.mkdir(parents=True, exist_ok=True)
 
@@ -61,7 +55,7 @@ def create_frames(
 
     for i, (t, sheet) in enumerate(history.browse(start, stop, num_frames)):
         try:
-            fig, ax = draw_func(sheet, **draw_kwds)
+            fig, ax = sheet_view(sheet, **draw_kwds)
             fig.set_size_inches(20,20)
 
             if isinstance(ax, plt.Axes) and margin >= 0:
