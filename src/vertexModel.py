@@ -40,7 +40,10 @@ def initialize():
         disty=1, # distance between 2 cells along y
         noise=noiseCellShape)
 
-    cellMap.remove(cellMap.cut_out([[1, numCellRows], [1, numCellRows]]), trim_borders=True)
+    try:
+        cellMap.remove(cellMap.cut_out([[1, numCellRows], [1, numCellRows]]), trim_borders=True)
+    except:
+        cellMap.sanitize(trim_borders=True, order_edges=True)
     cellMap.reset_index()
     cellMap.reset_topo()
 
