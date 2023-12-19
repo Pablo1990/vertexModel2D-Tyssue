@@ -159,3 +159,5 @@ Data analysis/*
 *.vtk
 
 results/
+
+.idea/
