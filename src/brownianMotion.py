@@ -1,6 +1,6 @@
-from tyssue.dynamics import effectors
 import numpy as np
 import pandas as pd
+from tyssue.dynamics import effectors
 
 
 # Adding some gigling

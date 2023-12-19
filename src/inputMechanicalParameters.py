@@ -1,25 +1,31 @@
 import src.auxFunctions as auxFunctions
 
+
 def update(cellmap):
-    ## Per sheet:
+    """
+
+    :param cellmap:
+    :return:
+    """
+    # Per sheet:
     cellmap.settings["temperature"] = 10
-    #Stochastically detaches vertices from rosettes.
-    #Uses two probabilities `p_4` and `p_5p`
+    # Stochastically detaches vertices from rosettes.
+    # Uses two probabilities `p_4` and `p_5p`
     cellmap.settings["p_4"] = 10
     cellmap.settings["p_5p"] = 0.1
     cellmap.settings["threshold_length"] = 2e-2
 
-    ## Per cell:
+    # Per cell:
 
-    ## Per face:
+    # Per face:
     cellmap.face_df["area_elasticity"] = 50
-    cellmap.face_df["prefered_area"] = cellmap.face_df["area"].mean()*1.1
+    cellmap.face_df["prefered_area"] = cellmap.face_df["area"].mean() * 1.1
 
     cellmap.face_df["perimeter"] = 1
     cellmap.face_df["perimeter_elasticity"] = 10
     cellmap.face_df["prefered_perimeter"] = 3.81
 
-    ## Per edge:
+    # Per edge:
     rangeLineTension = 0
 
     if rangeLineTension:
@@ -29,8 +35,7 @@ def update(cellmap):
     else:
         cellmap.edge_df["line_tension"] = 0.1
 
-    ## Per vertex:
-    cellmap.vert_df["viscosity"] = 1 
+    # Per vertex:
+    cellmap.vert_df["viscosity"] = 1
 
-    ## return
     return cellmap
