@@ -1,19 +1,35 @@
 # vertexModel2D-Tyssue
 
-## Instructions to install
-
-### Environment
+## Instructions to install tyssue from pypi
+### Create the environment
 ```
 conda create -n tyssue-env python=3.8
 conda activate tyssue-env
 ```
 
-### Install tyssue
+### Install tyssue 
 ```
 conda install -c conda-forge tyssue
 ```
 
-### pip install packages
+## Install from source
+```
+git clone --recursive https://github.com/damcb/tyssue.git
+cd tyssue
+```
+
+### Create the environment
+```
+conda env create -f environment.yml
+```
+
+### Install tyssue
+```
+conda activate tyssue
+python setup.py install
+```
+
+## Install additional packages
 ```
 pip install jupyterlab
 ```
