@@ -1,6 +1,6 @@
 # vertexModel2D-Tyssue
 
-## Instructions to install tyssue from pypi
+## Instructions to install tyssue from conda
 ### Create the environment
 ```
 conda create -n tyssue-env python=3.8
