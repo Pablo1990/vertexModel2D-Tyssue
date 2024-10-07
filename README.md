@@ -20,6 +20,10 @@ conda install -c conda-forge tyssue
 pip install pandas==1.5.3 pathlib==1.0.1 numpy==1.23.5 jupyterlab
 ```
 
+## DO NOT INSTALL IPYVOLUME OR CGAL
+
+We really do not care right now about those two requirements.
+
 ## Run the code
 ```
 main.ipynb
