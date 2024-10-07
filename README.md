@@ -17,7 +17,7 @@ conda install -c conda-forge tyssue
 
 ## Install additional packages
 ```
-pip install pandas==1.3.5 jupyterlab
+pip install pandas==1.5.3 pathlib==1.0.1 numpy==1.23.5 jupyterlab
 ```
 
 ## Run the code
