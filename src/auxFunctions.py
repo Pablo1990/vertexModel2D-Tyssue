@@ -1,5 +1,6 @@
 import pathlib
 import random
+import numpy as np
 
 import matplotlib.pylab as plt
 from tyssue.draw import sheet_view
@@ -58,18 +59,25 @@ def create_frames(
     else:
         start, stop = interval[0], interval[1]
 
-    for i, (t, sheet) in enumerate(history.browse(start, stop, num_frames)):
+    # Replace the loop that uses 'browse' with this manual approach
+    for i, t in enumerate(np.linspace(start if start else 0, stop if stop else history.time,
+                                      num_frames if num_frames else len(history.time_stamps))):
         try:
+            # Manually retrieve each sheet for the corresponding time step
+            sheet = history.retrieve(int(t))  # retrieve from history at time 't'
+
+            # Now apply the sheet view function as before
             fig, ax = sheet_view(sheet, **draw_kwds)
             fig.set_size_inches(20, 20)
 
+            # Set the xlim and ylim for margins, as in the original code
             if isinstance(ax, plt.Axes) and margin >= 0:
                 ax.set(xlim=xlim, ylim=ylim)
 
             plt.axis('off')
             fig.savefig(graph_dir / f"movie_{i:04d}.png")
         except Exception as e:
-            print("Droped frame {i}")
+            print(f"Dropped frame {i}")
             print(e)
 
         plt.close()
@@ -83,5 +91,15 @@ def exportToMesh(history, dir):
     :return:
     """
 
-    for i, (t, sheet) in enumerate(history.browse(None, None, None)):
-        obj.save_splitted_cells(dir + '/junctions_' + str(t) + '.obj', sheet, epsilon=0.001)
+    # Replace the loop that uses 'browse' with this manual approach
+    for i, t in enumerate(np.linspace(0, history.time, len(history.time_stamps))):
+        try:
+            # Manually retrieve each sheet for the corresponding time step
+            sheet = history.retrieve(int(t))  # retrieve from history at time 't'
+
+            # Save the split cells data using the provided function
+            obj.save_splitted_cells(dir + f'/junctions_{int(t)}.obj', sheet, epsilon=0.001)
+
+        except Exception as e:
+            print(f"Error at time {t}: {e}")
+
