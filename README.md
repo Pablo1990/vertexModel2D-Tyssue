@@ -24,8 +24,19 @@ pip install pandas==1.5.3 pathlib==1.0.1 numpy==1.23.5 jupyterlab
 
 We really do not care right now about those two requirements.
 
-## Run the code
+## Download the code
+Via:
+
 ```
+git clone --recursive https://github.com/damcb/tyssue.git
+```
+or downloading the zip file: https://github.com/Pablo1990/vertexModel2D-Tyssue/archive/refs/heads/main.zip
+
+## Run the code
+Through jupyter notebook or lab. 
+
+```
+jupyter notebook
 main.ipynb
 ```
 or
