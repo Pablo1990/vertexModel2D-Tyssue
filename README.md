@@ -12,7 +12,7 @@ conda activate tyssue-env
 
 ### Install tyssue via conda-forge
 ```
-conda install -c conda-forge tyssue
+conda install -c conda-forge tyssue==0.8.0
 ```
 
 ## Install additional packages
