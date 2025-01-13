@@ -1,3 +1,10 @@
+from tyssue import History
+from tyssue.draw import sheet_view
+from tyssue.draw.plt_draw import quick_edge_draw
+from tyssue.io import obj
+import csv
+import matplotlib.pylab as plt
+import numpy as np
 import pathlib
 import random
 import numpy as np
@@ -20,16 +27,31 @@ def line_tension_range(cellmap, lower_line_tension, higher_line_tension):
         cellmap.edge_df.loc[edge, 'line_tension'] = newValue
     return cellmap
 
+def length_elasticity_range(cellmap, lower_line_tension, higher_line_tension):
+    for edge in range(len(cellmap.edge_df)):
+        newValue = random.uniform(lower_line_tension, higher_line_tension)
+        cellmap.edge_df.loc[edge, 'length_elasticity'] = newValue 
+    return cellmap
 
 def create_frames(
-        history,
-        output,
-        num_frames=None,
-        interval=None,
-        draw_func=None,
-        margin=5,
-        **draw_kwds,
+    history,
+    output,
+    num_frames=None,
+    interval=None,
+    margin=0,
+    **draw_kwds,
 ):
+    """Creates a set of png frames of the recorded history.
+   
+    Parameters
+    ----------
+    history : a :class:`tyssue.History` object
+    output : path to the output directory
+    num_frames : int, the number of frames in the gif
+    interval : tuples, define begin and end frame of the gif
+    margin : int, the graph margins in percents, default 5
+         if margin is -1, let the draw function decide
+    **draw_kwds are passed to the drawing function
     """
     Creates a set of png frames of the recorded history.
     :param history:  a :class:`tyssue.History` object
@@ -70,12 +92,29 @@ def create_frames(
             fig, ax = sheet_view(sheet, **draw_kwds)
             fig.set_size_inches(20, 20)
 
-            # Set the xlim and ylim for margins, as in the original code
-            if isinstance(ax, plt.Axes) and margin >= 0:
-                ax.set(xlim=xlim, ylim=ylim)
+            # if isinstance(ax, plt.Axes) and margin >= 0:
+            #     ax.set(xlim=xlim, ylim=ylim)
+
+            # labels = np.array(sheet.face_df.index.array, dtype=np.uint32);
+            # x = sheet.face_df.x;
+            # y = sheet.face_df.y;
+            # for index, label in enumerate(labels):
+            #     ax.text(x[index], y[index], label, fontsize=5, ha='center')
+
+            # Combine the arrays into a list of rows
+            rows = zip(sheet.face_df.x, bounds.loc["max", y] - sheet.face_df.y, np.array(sheet.face_df.index.array, dtype=np.uint32))
+
+            # Define the file path and name
+            file_name = graph_dir / f"movie_{i:04d}.csv"
+
+            # # Open the CSV file in write mode and write the rows
+            # with open(file_name, 'w', newline='') as file:
+            #     writer = csv.writer(file)
+            #     writer.writerow(['Column1', 'Column2', 'Column3'])  # Write header
+            #     writer.writerows(rows)  # Write data rows
 
             plt.axis('off')
-            fig.savefig(graph_dir / f"movie_{i:04d}.png")
+            fig.savefig(graph_dir / f"movie_{i:04d}.png") #, bbox_inches='tight', pad_inches=0
         except Exception as e:
             print(f"Dropped frame {i}")
             print(e)
