@@ -1,6 +1,10 @@
 # vertexModel2D-Tyssue
 
-## Instructions to install tyssue
+## Use it with Google Colab
+
+Open 'main_colab.ipynib', make a copy, and run it.
+
+## Install tyssue locally in your computer
 
 You can install tyssue from the conda-forge channel or from source.
 
