@@ -1,5 +1,6 @@
 import copy
 
+import numpy as np
 from tyssue import PlanarGeometry, Sheet, History
 from tyssue.behaviors import EventManager
 from tyssue.draw import sheet_view
@@ -31,7 +32,7 @@ def initialize():
 
     ## Size of the patch
     numCellRows = 40
-    noiseCellShape = 0.2
+    noiseCellShape = 0.27
 
     # noise = 0 -> hexagonal pattern
     # noise = 1 -> random voronoi
@@ -156,3 +157,29 @@ def solveStepByStep(cellMap, geom, energyContributions_model, endTime):
     history_new = copy.deepcopy(history_cellMap)
 
     return [cellMap_new, geom, energyContributions_model, history_new]
+
+def compute_polygon_distribution(cell_map):
+    """
+    Compute the polygon distribution of the cell map
+    :param cell_map:
+    :return:
+    """
+    faces_neighbours = []
+    for num_cell in range(len(cell_map.face_df)):
+        faces_neighbours.append(len(cell_map.get_neighbors(num_cell, elem='face')))
+
+    num_fours = faces_neighbours.count(4)
+    num_fives = faces_neighbours.count(5)
+    num_sixs = faces_neighbours.count(6)
+    num_sevens = faces_neighbours.count(7)
+    num_eights = faces_neighbours.count(8)
+    num_nines = faces_neighbours.count(9)
+    total_numbers = num_fours + num_fives + num_sixs + num_sevens + num_eights + num_nines
+
+    polygon_distribution = np.array([num_fours, num_fives, num_sixs, num_sevens, num_eights, num_nines])/ total_numbers
+
+    # Print the polygon distribution
+    for i, num in enumerate(polygon_distribution):
+        print(f"Number of polygons with {i+4} sides: {num}%")
+
+    return polygon_distribution

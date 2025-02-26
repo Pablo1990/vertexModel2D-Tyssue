@@ -53,18 +53,7 @@ def create_frames(
          if margin is -1, let the draw function decide
     **draw_kwds are passed to the drawing function
     """
-    Creates a set of png frames of the recorded history.
-    :param history:  a :class:`tyssue.History` object
-    :param output:  path to the output directory
-    :param num_frames:  int, the number of frames in the gif
-    :param interval:    tuples, define begin and end frame of the gif
-    :param draw_func:   a drawing function. This function must take a `sheet` object as first argument and return a
-    `fig, ax` pair. Defaults to quick_edge_draw(aka sheet_view with quick mode)
-    :param margin:  int, the graph margins in percents, default 5. If margin is -1, let the draw function decide
-    :param draw_kwds:   are passed to the drawing function
-    :return:
-    """
-
+    
     graph_dir = pathlib.Path(output)
     graph_dir.mkdir(parents=True, exist_ok=True)
 
@@ -101,17 +90,17 @@ def create_frames(
             # for index, label in enumerate(labels):
             #     ax.text(x[index], y[index], label, fontsize=5, ha='center')
 
-            # Combine the arrays into a list of rows
-            rows = zip(sheet.face_df.x, bounds.loc["max", y] - sheet.face_df.y, np.array(sheet.face_df.index.array, dtype=np.uint32))
-
-            # Define the file path and name
-            file_name = graph_dir / f"movie_{i:04d}.csv"
-
-            # # Open the CSV file in write mode and write the rows
-            # with open(file_name, 'w', newline='') as file:
-            #     writer = csv.writer(file)
-            #     writer.writerow(['Column1', 'Column2', 'Column3'])  # Write header
-            #     writer.writerows(rows)  # Write data rows
+            # # Combine the arrays into a list of rows
+            # rows = zip(sheet.face_df.x, bounds.loc["max", y] - sheet.face_df.y, np.array(sheet.face_df.index.array, dtype=np.uint32))
+            #
+            # # Define the file path and name
+            # file_name = graph_dir / f"movie_{i:04d}.csv"
+            #
+            # # # Open the CSV file in write mode and write the rows
+            # # with open(file_name, 'w', newline='') as file:
+            # #     writer = csv.writer(file)
+            # #     writer.writerow(['Column1', 'Column2', 'Column3'])  # Write header
+            # #     writer.writerows(rows)  # Write data rows
 
             plt.axis('off')
             fig.savefig(graph_dir / f"movie_{i:04d}.png") #, bbox_inches='tight', pad_inches=0
