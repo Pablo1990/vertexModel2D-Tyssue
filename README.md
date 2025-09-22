@@ -16,7 +16,7 @@ source tyssue-env/bin/activate
 
 ### Install tyssue via pip and additional packages
 ```
-pip install pandas==1.5.3 pathlib==1.0.1 numpy==1.23.5 jupyterlab tyssue==0.8.0
+pip install pandas==1.5.3 pathlib==1.0.1 numpy==1.23.5 tyssue==0.8.0 jupyterlab scipy matplotlib ipywidgets vispy quantities
 ```
 
 ## DO NOT INSTALL IPYVOLUME OR CGAL
