@@ -1,6 +1,6 @@
 # vertexModel2D-Tyssue
 
-## Use it with Google Colab
+## Use it with Google Colab -no longer working :(
 
 Open 'main_colab.ipynib', make a copy, and run it.
 
@@ -8,20 +8,15 @@ Open 'main_colab.ipynib', make a copy, and run it.
 
 You can install tyssue from the conda-forge channel or from source.
 
-### Create the environment
+### Create the environment with python venv
 ```
-conda create -n tyssue-env
-conda activate tyssue-env
-```
-
-### Install tyssue via conda-forge
-```
-conda install -c conda-forge tyssue==0.8.0
+python -m venv tyssue-env
+source tyssue-env/bin/activate
 ```
 
-## Install additional packages
+### Install tyssue via pip and additional packages
 ```
-pip install pandas==1.5.3 pathlib==1.0.1 numpy==1.23.5 jupyterlab
+pip install pandas==1.5.3 pathlib==1.0.1 numpy==1.23.5 jupyterlab tyssue==0.8.0
 ```
 
 ## DO NOT INSTALL IPYVOLUME OR CGAL
