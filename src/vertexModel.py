@@ -5,6 +5,7 @@ from tyssue import PlanarGeometry, Sheet, History
 from tyssue.behaviors import EventManager
 from tyssue.draw import sheet_view
 from tyssue.dynamics import effectors, model_factory
+from tyssue.solvers import QSSolver
 from tyssue.solvers.viscous import EulerSolver
 
 import src.brownianMotion as brownianMotion
@@ -45,7 +46,7 @@ def initialize():
 
     try:
         cellMap.remove(cellMap.cut_out([[1, numCellRows], [1, numCellRows]]), trim_borders=True)
-    except:
+    except Exception:
         cellMap.sanitize(trim_borders=True, order_edges=True)
     cellMap.reset_index()
     cellMap.reset_topo()
@@ -77,13 +78,17 @@ def on_topo_change(sheet):
     print('Topology changed!')
 
 
-def solveEuler(cellMap, geom, energyContributions_model, endTime):
+def solveEuler(cellMap, geom, energyContributions_model, endTime, dt=1, with_t3=False):
     """
 
     :param cellMap:
     :param geom:
     :param energyContributions_model:
     :param endTime:
+    :param dt: time step
+    :param with_t3: if True, perform type 3 transitions (a border vertex
+        merging into the free edge of a neighbouring cell, new in vivatyssue).
+        Useful for wound borders / tissue edges.
     :return:
     """
     ## Init history object
@@ -104,12 +109,13 @@ def solveEuler(cellMap, geom, energyContributions_model, endTime):
                               cellMap.edge_df.length.median() / 10
                           ),
                           history=history_cellMap,
-                          auto_reconnect=True)
+                          auto_reconnect=True,
+                          with_t3=with_t3)
 
     manager.update()
 
     ## Run the solver
-    res1 = solver1.solve(tf=endTime, dt=1, on_topo_change=on_topo_change,
+    res1 = solver1.solve(tf=endTime, dt=dt, on_topo_change=on_topo_change,
                          topo_change_args=(solver1.eptm,))
 
     ## Deep copy to return it and being able to modify maintaining the previous one
@@ -121,6 +127,8 @@ def solveEuler(cellMap, geom, energyContributions_model, endTime):
 
 def solveStepByStep(cellMap, geom, energyContributions_model, endTime):
     """
+    Quasi-static simulation: at each step, execute the scheduled events and
+    then find the energy minimum (with T1 and T2 transitions).
 
     :param cellMap:
     :param geom:
@@ -133,22 +141,21 @@ def solveStepByStep(cellMap, geom, energyContributions_model, endTime):
     history_cellMap = History(cellMap)
 
     ## Manager Initialization
-    manager = EventManager("manager", )
+    manager = EventManager("face")
 
-    ## Find the minima in different timeSteps:
+    ## Quasi-static solver
     # https://tyssue.readthedocs.io/en/latest/notebooks/07-EventManager.html
+    solver = QSSolver(with_t1=True, with_t2=True)
+
     t = 0
-
-    history_cellMap = history_cellMap(cellMap)
-
-    while manager.current and t < endTime:
+    while t < endTime:
         # Execute the event in the current list
         manager.execute(cellMap)
         t += 1
         cellMap.reset_index(order=True)
         # Find energy min
-        res = solver.resolve_t1s(cellMap, geom, energyContributions_model)
-        history_cellMap.record()
+        res = solver.find_energy_min(cellMap, geom, energyContributions_model)
+        history_cellMap.record(time_stamp=t)
         # Switch event list from the next list to the current list
         manager.update()
 
@@ -158,28 +165,23 @@ def solveStepByStep(cellMap, geom, energyContributions_model, endTime):
 
     return [cellMap_new, geom, energyContributions_model, history_new]
 
+
 def compute_polygon_distribution(cell_map):
     """
-    Compute the polygon distribution of the cell map
+    Compute the polygon distribution (number of neighbouring cells, from 4 to 9)
+    of the cell map
     :param cell_map:
-    :return:
+    :return: fraction of cells with 4, 5, ..., 9 neighbours
     """
-    faces_neighbours = []
-    for num_cell in range(len(cell_map.face_df)):
-        faces_neighbours.append(len(cell_map.get_neighbors(num_cell, elem='face')))
-
-    num_fours = faces_neighbours.count(4)
-    num_fives = faces_neighbours.count(5)
-    num_sixs = faces_neighbours.count(6)
-    num_sevens = faces_neighbours.count(7)
-    num_eights = faces_neighbours.count(8)
-    num_nines = faces_neighbours.count(9)
-    total_numbers = num_fours + num_fives + num_sixs + num_sevens + num_eights + num_nines
-
-    polygon_distribution = np.array([num_fours, num_fives, num_sixs, num_sevens, num_eights, num_nines])/ total_numbers
+    faces_neighbours = np.array(
+        [len(cell_map.get_neighbors(face)) for face in cell_map.face_df.index]
+    )
+    sides = np.arange(4, 10)
+    counts = np.array([(faces_neighbours == n).sum() for n in sides])
+    polygon_distribution = counts / counts.sum()
 
     # Print the polygon distribution
-    for i, num in enumerate(polygon_distribution):
-        print(f"Number of polygons with {i+4} sides: {num}%")
+    for n, frac in zip(sides, polygon_distribution):
+        print(f"Polygons with {n} sides: {100 * frac:.1f}%")
 
     return polygon_distribution

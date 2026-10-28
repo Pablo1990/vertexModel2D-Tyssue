@@ -5,22 +5,24 @@ from tyssue.dynamics import effectors
 
 # Adding some gigling
 class BrownianMotion(effectors.AbstractEffector):
-    
+
     label = 'Brownian Motion'
     element = 'vert'
     specs = {"settings": {"temperature": 1e-3}}
-    
+
+    @staticmethod
     def energy(eptm):
         T = eptm.settings['temperature']
         return np.ones(eptm.Nv) * T / eptm.Nv
-    
+
+    @staticmethod
     def gradient(eptm):
         T = eptm.settings['temperature']
-        scale = T/eptm.edge_df.length.mean()
-        
+        scale = T / eptm.edge_df.length.mean()
+
         grad = pd.DataFrame(
             data=np.random.normal(0, scale=scale, size=(eptm.Nv, eptm.dim)),
             index=eptm.vert_df.index,
-            columns=['g'+c for c in eptm.coords]
+            columns=['g' + c for c in eptm.coords]
         )
         return grad, None

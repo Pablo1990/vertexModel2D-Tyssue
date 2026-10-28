@@ -1,17 +1,10 @@
-from tyssue import History
-from tyssue.draw import sheet_view
-from tyssue.draw.plt_draw import quick_edge_draw
-from tyssue.io import obj
-import csv
-import matplotlib.pylab as plt
-import numpy as np
 import pathlib
-import random
+
+import matplotlib.pyplot as plt
+import meshio
 import numpy as np
 
-import matplotlib.pylab as plt
 from tyssue.draw import sheet_view
-from tyssue.io import obj
 
 
 def line_tension_range(cellmap, lower_line_tension, higher_line_tension):
@@ -22,16 +15,18 @@ def line_tension_range(cellmap, lower_line_tension, higher_line_tension):
     :param higher_line_tension:
     :return:
     """
-    for edge in range(len(cellmap.edge_df)):
-        newValue = random.uniform(lower_line_tension, higher_line_tension)
-        cellmap.edge_df.loc[edge, 'line_tension'] = newValue
+    cellmap.edge_df["line_tension"] = np.random.uniform(
+        lower_line_tension, higher_line_tension, size=cellmap.Ne
+    )
     return cellmap
 
-def length_elasticity_range(cellmap, lower_line_tension, higher_line_tension):
-    for edge in range(len(cellmap.edge_df)):
-        newValue = random.uniform(lower_line_tension, higher_line_tension)
-        cellmap.edge_df.loc[edge, 'length_elasticity'] = newValue 
+
+def length_elasticity_range(cellmap, lower_value, higher_value):
+    cellmap.edge_df["length_elasticity"] = np.random.uniform(
+        lower_value, higher_value, size=cellmap.Ne
+    )
     return cellmap
+
 
 def create_frames(
     history,
@@ -42,73 +37,72 @@ def create_frames(
     **draw_kwds,
 ):
     """Creates a set of png frames of the recorded history.
-   
+
     Parameters
     ----------
     history : a :class:`tyssue.History` object
     output : path to the output directory
-    num_frames : int, the number of frames in the gif
-    interval : tuples, define begin and end frame of the gif
-    margin : int, the graph margins in percents, default 5
+    num_frames : int, the number of frames (default: one per recorded time step)
+    interval : tuple of int, (first, last) time-point *index* to draw
+    margin : int, the graph margins in percents, default 0
          if margin is -1, let the draw function decide
     **draw_kwds are passed to the drawing function
     """
-    
     graph_dir = pathlib.Path(output)
     graph_dir.mkdir(parents=True, exist_ok=True)
 
     x, y = coords = draw_kwds.get("coords", history.sheet.coords[:2])
-    sheet0 = history.retrieve(0)
+    sheet0 = history.retrieve(history.time_stamps[0])
     bounds = sheet0.vert_df[coords].describe().loc[["min", "max"]]
     delta = (bounds.loc["max"] - bounds.loc["min"]).max()
     margin = delta * margin / 100
     xlim = bounds.loc["min", x] - margin, bounds.loc["max", x] + margin
     ylim = bounds.loc["min", y] - margin, bounds.loc["max", y] + margin
 
-    if interval is None:
-        start, stop = None, None
-    else:
-        start, stop = interval[0], interval[1]
+    start, stop = (0, None) if interval is None else interval
 
-    # Replace the loop that uses 'browse' with this manual approach
-    for i, t in enumerate(np.linspace(start if start else 0, stop if stop else history.time,
-                                      num_frames if num_frames else len(history.time_stamps))):
+    # History.browse works again in vivatyssue: it yields (time, sheet) pairs
+    # using the real recorded time stamps, whatever dt was.
+    for i, (t, sheet) in enumerate(
+        history.browse(start=start, stop=stop, size=num_frames)
+    ):
         try:
-            # Manually retrieve each sheet for the corresponding time step
-            sheet = history.retrieve(int(t))  # retrieve from history at time 't'
-
-            # Now apply the sheet view function as before
             fig, ax = sheet_view(sheet, **draw_kwds)
             fig.set_size_inches(20, 20)
-
             # if isinstance(ax, plt.Axes) and margin >= 0:
             #     ax.set(xlim=xlim, ylim=ylim)
-
-            # labels = np.array(sheet.face_df.index.array, dtype=np.uint32);
-            # x = sheet.face_df.x;
-            # y = sheet.face_df.y;
-            # for index, label in enumerate(labels):
-            #     ax.text(x[index], y[index], label, fontsize=5, ha='center')
-
-            # # Combine the arrays into a list of rows
-            # rows = zip(sheet.face_df.x, bounds.loc["max", y] - sheet.face_df.y, np.array(sheet.face_df.index.array, dtype=np.uint32))
-            #
-            # # Define the file path and name
-            # file_name = graph_dir / f"movie_{i:04d}.csv"
-            #
-            # # # Open the CSV file in write mode and write the rows
-            # # with open(file_name, 'w', newline='') as file:
-            # #     writer = csv.writer(file)
-            # #     writer.writerow(['Column1', 'Column2', 'Column3'])  # Write header
-            # #     writer.writerows(rows)  # Write data rows
-
-            plt.axis('off')
-            fig.savefig(graph_dir / f"movie_{i:04d}.png") #, bbox_inches='tight', pad_inches=0
+            plt.axis("off")
+            fig.savefig(graph_dir / f"movie_{i:04d}.png")
         except Exception as e:
-            print(f"Dropped frame {i}")
-            print(e)
+            print(f"Dropped frame {i} (t={t}): {e}")
+        finally:
+            plt.close("all")
 
-        plt.close()
+
+def save_splitted_cells(fname, sheet, epsilon=0.001):
+    """Saves the sheet as a triangular mesh where each cell is shrunk towards
+    its centre by `epsilon`, so neighbouring cells do not share vertices.
+
+    Same output as `tyssue.io.obj.save_splitted_cells`, but written with
+    meshio (a core vivatyssue dependency) instead of vispy (`tyssue[viz]`).
+    """
+    coords = sheet.coords
+    up_srce = sheet.upcast_srce(sheet.vert_df[coords]).to_numpy()
+    up_trgt = sheet.upcast_trgt(sheet.vert_df[coords]).to_numpy()
+    up_face = sheet.upcast_face(sheet.face_df[coords]).to_numpy()
+    up_srce = (up_srce - up_face) * (1 - epsilon) + up_face
+    up_trgt = (up_trgt - up_face) * (1 - epsilon) + up_face
+
+    points = np.vstack([sheet.face_df[coords].to_numpy(), up_srce, up_trgt])
+    if points.shape[1] == 2:  # OBJ needs 3D points
+        points = np.hstack([points, np.zeros((points.shape[0], 1))])
+
+    Ne, Nf = sheet.Ne, sheet.Nf
+    face_pos = sheet.face_df.index.get_indexer(sheet.edge_df["face"])
+    triangles = np.vstack(
+        [face_pos, np.arange(Ne) + Nf, np.arange(Ne) + Ne + Nf]
+    ).T
+    meshio.write_points_cells(str(fname), points, [("triangle", triangles)])
 
 
 def exportToMesh(history, dir):
@@ -118,16 +112,10 @@ def exportToMesh(history, dir):
     :param dir:
     :return:
     """
-
-    # Replace the loop that uses 'browse' with this manual approach
-    for i, t in enumerate(np.linspace(0, history.time, len(history.time_stamps))):
+    out_dir = pathlib.Path(dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for t, sheet in history:
         try:
-            # Manually retrieve each sheet for the corresponding time step
-            sheet = history.retrieve(int(t))  # retrieve from history at time 't'
-
-            # Save the split cells data using the provided function
-            obj.save_splitted_cells(dir + f'/junctions_{int(t)}.obj', sheet, epsilon=0.001)
-
+            save_splitted_cells(out_dir / f"junctions_{int(t)}.obj", sheet, epsilon=0.001)
         except Exception as e:
             print(f"Error at time {t}: {e}")
-

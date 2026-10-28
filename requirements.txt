@@ -1,4 +1,6 @@
-tyssue~=0.9.0
-pathlib~=1.0.1
-numpy~=1.23.5
-pandas~=1.5.3
+# tyssue is installed from the local vivatyssue fork (pip install -r requirements.txt)
+-e ./vivatyssue
+numpy>=1.22
+pandas>=1.5
+matplotlib>=3.5
+meshio>=5.0
