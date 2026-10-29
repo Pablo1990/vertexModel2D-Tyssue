@@ -1,14 +1,11 @@
 import src.auxFunctions as auxFunctions
 
-
 def update(cellmap):
     """
 
     :param cellmap:
     :return:
     """
-    # Per sheet:
-    cellmap.settings["temperature"] = 10
     # Stochastically detaches vertices from rosettes.
     # Uses two probabilities `p_4` and `p_5p`
     cellmap.settings["p_4"] = 10

@@ -1,7 +1,7 @@
 import copy
 
 import numpy as np
-from tyssue import PlanarGeometry, Sheet, History
+from tyssue import SheetGeometry, Sheet, History
 from tyssue.behaviors import EventManager
 from tyssue.draw import sheet_view
 from tyssue.dynamics import effectors, model_factory
@@ -9,9 +9,10 @@ from tyssue.solvers import QSSolver
 from tyssue.solvers.viscous import EulerSolver
 
 import src.brownianMotion as brownianMotion
+from periodic import periodic_voronoi_sheet
 
 
-def initialize():
+def initialize(numCellRows=100, noiseCellShape=0.27, periodic=False):
     """
     Initialize the model
     :return:
@@ -19,8 +20,7 @@ def initialize():
     ## Defining energy contributions
     # https://tyssue.readthedocs.io/en/latest/_modules/tyssue/dynamics/effectors.html
     energyContributions_model = model_factory([
-        brownianMotion.BrownianMotion,
-        effectors.FaceAreaElasticity,
+        effectors.FaceVolumeElasticity,
         effectors.LineTension,
         # effectors.LengthElasticity,
         effectors.PerimeterElasticity,
@@ -31,18 +31,17 @@ def initialize():
         # effectors.BorderElasticity
     ])
 
-    ## Size of the patch
-    numCellRows = 40
-    noiseCellShape = 0.27
-
-    # noise = 0 -> hexagonal pattern
-    # noise = 1 -> random voronoi
-    cellMap = Sheet.planar_sheet_2d('tissue',
-                                    nx=numCellRows,  # approximate number of cells on the x axis
-                                    ny=numCellRows,  # approximate number of cells along the y axis
-                                    distx=1,  # distance between 2 cells along x
-                                    disty=1,  # distance between 2 cells along y
-                                    noise=noiseCellShape)
+    if not periodic:
+        # noise = 0 -> hexagonal pattern
+        # noise = 1 -> random voronoi
+        cellMap = Sheet.planar_sheet_3d('tissue',
+                                        nx=numCellRows,  # approximate number of cells on the x axis
+                                        ny=numCellRows,  # approximate number of cells along the y axis
+                                        distx=1,  # distance between 2 cells along x
+                                        disty=1,  # distance between 2 cells along y
+                                        noise=noiseCellShape)
+    else:
+        cellMap = periodic_voronoi_sheet(n_cells=a.n_cells, cell_area=1.0, seed=a.seed)
 
     try:
         cellMap.remove(cellMap.cut_out([[1, numCellRows], [1, numCellRows]]), trim_borders=True)
@@ -55,7 +54,7 @@ def initialize():
     # PlanarGeometry: Geometry methods for 2D planar cell arangements
     # SheetGeometry: Geometry definitions for 2D sheets in 3D
     # BulkGeometry: Geometry functions for 3D cell arangements
-    geom = PlanarGeometry
+    geom = SheetGeometry
 
     # Update geometry with the patch
     geom.update_all(cellMap)
