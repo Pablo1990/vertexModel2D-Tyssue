@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 from tyssue import PlanarGeometry
 
 from src.inputMechanicalParameters import wound_contractility
@@ -43,6 +44,8 @@ def ablate(sheet, faces, geom=PlanarGeometry):
     sheet.reset_topo()
     sheet.network_changed = True
     geom.update_all(sheet)
+    # Wound area at the ablation, reference of the relative wound area
+    sheet.face_df["area0"] = sheet.face_df["area"]
     return sheet
 
 
@@ -77,6 +80,7 @@ def wound_measures(sheet):
         "wound_area": float(abs(sheet.face_df.loc[d, "area"])),
         "wound_perimeter": float(sheet.face_df.loc[d, "perimeter"]),
         "num_cells_wound_edge": int(sheet.edge_df.loc[we, "face"].nunique()),
+        "relative_wound_area": 100 * float(abs(sheet.face_df.loc[d, "area"])) / float(abs(sheet.face_df.loc[d, "area0"]))
     }
 
 
@@ -105,6 +109,51 @@ def wound_features(wound_timecourse):
         "time_max_wound_area": float(t[i_max]),
         "healing_rate": float(healing_rate),
     }
+
+
+def relative_wound_area(wound_timecourse, timeAfterAblation):
+    """
+    Relative wound area (%) at a time after ablation: 100 * A(t) / A(0), so 100% at the ablation
+    :param wound_timecourse: DataFrame with 'time_after_ablation' (min) and 'wound_area'
+    :param timeAfterAblation: minutes
+    :return: relative wound area (%)
+    """
+    t = wound_timecourse["time_after_ablation"].to_numpy()
+    area = wound_timecourse["wound_area"].to_numpy()
+    return float(100 * np.interp(timeAfterAblation, t, area) / np.interp(0.0, t, area))
+
+
+def load_wound_area_target(csvFile, timeAfterAblation):
+    """
+    Target relative wound area (%) from experimental data
+    :param csvFile: CSV with columns 'time_after_ablation' (min) and 'wound_area' (any unit, or
+        already in % of the area at t = 0)
+    :param timeAfterAblation: minutes
+    :return: relative wound area (%)
+    """
+    return relative_wound_area(pd.read_csv(csvFile), timeAfterAblation)
+
+
+def edge_recoil(sheet):
+    """
+    Mean initial recoil velocity after an edge ablation (length per minute).
+
+    As in Farhadifar et al. 2007, an edge shared by cells f and g carries the tension
+    T = Lambda + Gamma_f P_f + Gamma_g P_g (line tension plus the perimeter contractility
+    of both cells). Ablating the edge removes T; from mechanical equilibrium its two vertices
+    then separate at 2 T / viscosity. The volume term acts on the cell areas, not on single
+    edges, so it does not contribute.
+    :param sheet: relaxed tissue
+    :return: mean over the edges shared by two alive cells
+    """
+    faces = sheet.face_df
+    contractility = faces["is_alive"] * faces["contractility"] * faces["perimeter"]
+    # Each half-edge carries half of the line tension (tyssue LineTension)
+    halfTension = 0.5 * sheet.edge_df["line_tension"] + contractility.reindex(sheet.edge_df["face"]).to_numpy()
+    edges = sheet.edge_df[sheet.edge_df["opposite"] >= 0]
+    tension = halfTension.loc[edges.index].to_numpy() + halfTension.loc[edges["opposite"]].to_numpy()
+    viscosity = sheet.vert_df["viscosity"].reindex(edges["srce"]).to_numpy()
+    return float(np.mean(2 * tension / viscosity))
 
 
 def calibration_error(features, targets, weights=None):
