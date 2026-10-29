@@ -1,6 +1,7 @@
 import copy
 
 import numpy as np
+import pandas as pd
 from tyssue import SheetGeometry, Sheet, History
 from tyssue.behaviors import EventManager
 from tyssue.draw import sheet_view
@@ -9,8 +10,9 @@ from tyssue.solvers import QSSolver
 from tyssue.solvers.viscous import EulerSolver
 
 import src.brownianMotion as brownianMotion
-from effectors import EFFECTORS
-from periodic import periodic_voronoi_sheet
+import src.wound as wound
+from src.effectors import EFFECTORS
+from src.periodic import periodic_reconnect, periodic_voronoi_sheet
 
 
 def initialize(numCellRows=100, noiseCellShape=0.27, periodic=False):
@@ -42,13 +44,13 @@ def initialize(numCellRows=100, noiseCellShape=0.27, periodic=False):
                                         distx=1,  # distance between 2 cells along x
                                         disty=1,  # distance between 2 cells along y
                                         noise=noiseCellShape)
+        try:
+            cellMap.remove(cellMap.cut_out([[1, numCellRows], [1, numCellRows]]), trim_borders=True)
+        except Exception:
+            cellMap.sanitize(trim_borders=True, order_edges=True)
     else:
-        cellMap = periodic_voronoi_sheet(n_cells=a.n_cells, cell_area=1.0, seed=a.seed)
-
-    try:
-        cellMap.remove(cellMap.cut_out([[1, numCellRows], [1, numCellRows]]), trim_borders=True)
-    except Exception:
-        cellMap.sanitize(trim_borders=True, order_edges=True)
+        # periodic: no border to trim
+        cellMap = periodic_voronoi_sheet(n_cells=numCellRows, cell_area=1.0)
     cellMap.reset_index()
     cellMap.reset_topo()
 
@@ -124,6 +126,164 @@ def solveEuler(cellMap, geom, energyContributions_model, endTime, dt=1, with_t3=
     history_new = copy.deepcopy(history_cellMap)
 
     return [cellMap_new, geom, energyContributions_model, history_new]
+
+
+def create_solver(cellMap, geom, energyContributions_model, history, manager):
+    """
+    EulerSolver with T1 transitions (periodic-safe T1s on periodic sheets)
+
+    :param cellMap:
+    :param geom:
+    :param energyContributions_model:
+    :param history:
+    :param manager:
+    :return:
+    """
+    periodic = cellMap.settings.get("boundaries") is not None
+    if periodic:
+        manager.append(periodic_reconnect)
+
+    return EulerSolver(cellMap,
+                       geom,
+                       energyContributions_model,
+                       history=history,
+                       manager=manager,
+                       auto_reconnect=not periodic)
+
+
+def run_until(solver, endTime, dt):
+    """
+    Advance the solver from its current time (solver.prev_t, already computed) to endTime
+
+    :param solver:
+    :param endTime:
+    :param dt:
+    :return:
+    """
+    solver.prev_t += dt
+    solver.solve(tf=endTime, dt=dt)
+
+
+def mean_vertex_speed(cellMap, previousPositions, elapsedTime):
+    """
+    Mean distance moved by the vertices per unit time (minimum image on periodic sheets)
+
+    :param cellMap:
+    :param previousPositions: vert_df[coords] at the beginning of the interval
+    :param elapsedTime:
+    :return:
+    """
+    # T1 transitions can add or remove vertices: compare the ones present at both times
+    common = cellMap.vert_df.index.intersection(previousPositions.index)
+    displacement = cellMap.vert_df.loc[common, cellMap.coords] - previousPositions.loc[common]
+    for coord, (low, high) in (cellMap.settings.get("boundaries") or {}).items():
+        period = high - low
+        displacement[coord] -= period * np.round(displacement[coord] / period)
+
+    return np.linalg.norm(displacement.to_numpy(), axis=1).mean() / elapsedTime
+
+
+def solve_until_relaxed(cellMap, geom, energyContributions_model, tol=1e-3, maxTime=100):
+    """
+    Simulate until the vertices don't move much (relaxed tissue)
+
+    :param cellMap:
+    :param geom:
+    :param energyContributions_model:
+    :param tol: relaxed when the mean vertex speed (distance per minute) is below tol
+    :param maxTime: maximum simulated time (minutes)
+    :return:
+    """
+    dt = cellMap.settings["dt"]
+    checkEvery = cellMap.settings["record_every"]
+
+    ## Init history object, recording every checkEvery minutes
+    history_cellMap = History(cellMap, save_every=round(checkEvery / dt), dt=1)
+
+    ## Init solver
+    manager = EventManager("face")
+    solver = create_solver(cellMap, geom, energyContributions_model, history_cellMap, manager)
+
+    ## Run until the vertices stop moving
+    t = 0.0
+    speed = np.inf
+    while t < maxTime and speed > tol:
+        previousPositions = cellMap.vert_df[cellMap.coords].copy()
+        run_until(solver, t + checkEvery, dt)
+        t += checkEvery
+        speed = mean_vertex_speed(cellMap, previousPositions, checkEvery)
+
+    print(f"Relaxation stopped at t = {t:g} min, mean vertex speed = {speed:.2e}")
+
+    ## Deep copy to return it and being able to modify maintaining the previous one
+    cellMap_new = copy.deepcopy(cellMap)
+    history_new = copy.deepcopy(history_cellMap)
+
+    return [cellMap_new, geom, energyContributions_model, history_new]
+
+
+def wound_healing_event(sheet, manager, tAblation, woundTimecourse):
+    """
+    EventManager behaviour run after every Euler step: updates the wound tension and
+    records the wound every 'record_every' minutes
+
+    :param sheet:
+    :param manager:
+    :param tAblation: time of the ablation (minutes)
+    :param woundTimecourse: list where the wound records are appended
+    :return:
+    """
+    dt = sheet.settings["dt"]
+    numStep = manager.clock + 1  # manager.clock counts the steps already finished
+    t = tAblation + numStep * dt
+
+    wound.update_wound_tension(sheet, t)
+    if numStep % round(sheet.settings["record_every"] / dt) == 0:
+        woundTimecourse.append(wound.wound_record(sheet, t))
+
+    manager.append(wound_healing_event, tAblation=tAblation, woundTimecourse=woundTimecourse)
+
+
+def solve_with_ablation(cellMap, geom, energyContributions_model):
+    """
+    Perform an ablation and simulate until tend.
+    The ablation happens at TInitAblation, so the wound contractility follows the same
+    time profile as in the 3D model
+
+    :param cellMap: relaxed tissue
+    :param geom:
+    :param energyContributions_model:
+    :return: [cellMap, geom, energyContributions_model, history, woundTimecourse]
+        woundTimecourse: DataFrame with the wound measures every 'record_every' minutes,
+        to be summarised with wound.wound_features (recoil, max wound area, healing rate)
+    """
+    dt = cellMap.settings["dt"]
+    tAblation = cellMap.settings["TInitAblation"]
+    endTime = cellMap.settings["tend"]
+
+    ## Ablation: the central cells become a single debris cell
+    ablatedCells = wound.central_faces(cellMap, cellMap.settings["n_ablated"])
+    wound.ablate(cellMap, ablatedCells, geom)
+    wound.update_wound_tension(cellMap, tAblation)
+    woundTimecourse = [wound.wound_record(cellMap, tAblation)]
+
+    ## Init history object, recording every 'record_every' minutes
+    history_cellMap = History(cellMap, save_every=round(cellMap.settings["record_every"] / dt), dt=1)
+
+    ## Init solver, with the wound protocol executed after every step
+    manager = EventManager("face")
+    manager.append(wound_healing_event, tAblation=tAblation, woundTimecourse=woundTimecourse)
+    solver = create_solver(cellMap, geom, energyContributions_model, history_cellMap, manager)
+    solver.prev_t = tAblation
+
+    ## Run the solver
+    run_until(solver, endTime, dt)
+
+    ## Deep copy to return it and being able to modify maintaining the previous one
+    cellMap_new = copy.deepcopy(cellMap)
+    history_new = copy.deepcopy(history_cellMap)
+
+    return [cellMap_new, geom, energyContributions_model, history_new, pd.DataFrame(woundTimecourse)]
 
 
 def solveStepByStep(cellMap, geom, energyContributions_model, endTime):

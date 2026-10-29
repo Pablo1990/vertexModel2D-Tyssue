@@ -1,9 +1,7 @@
 import numpy as np
-
-from inputMechanicalParameters import wound_contractility
 from tyssue import PlanarGeometry
 
-geom = PlanarGeometry
+from src.inputMechanicalParameters import wound_contractility
 
 def central_faces(sheet, n):
     """n faces closest to the tissue centre (a connected cluster for a regular-ish sheet)."""
@@ -18,7 +16,7 @@ def central_faces(sheet, n):
     return d.sort_values().index[:n].to_numpy()
 
 
-def ablate(sheet, faces):
+def ablate(sheet, faces, geom=PlanarGeometry):
     """Combine the ablated cells into a single debris face (Geo.ablate_cells, combine_cells=True).
 
     The debris has no surface energy and no contractility (is_alive = 0); its
@@ -26,6 +24,8 @@ def ablate(sheet, faces):
     """
     faces = np.asarray(faces)
     debris = faces[0]
+    if "is_debris" not in sheet.face_df:
+        sheet.face_df["is_debris"] = 0
     geom.update_all(sheet)
     e = sheet.edge_df
     in_f = e["face"].isin(faces)
@@ -64,10 +64,8 @@ def wound_edges(sheet):
     return e.index[np.isin(opp_face, debris) & ~e["face"].isin(debris)]
 
 
-def update_wound_tension(sheet, t=None, ps=None, lc=None):
-    if ps is None:
-        ps = wound_contractility(sheet, t)
-    sheet.settings["wound_tension"] = ps
+def update_wound_tension(sheet, t):
+    sheet.settings["wound_tension"] = wound_contractility(sheet, t)
 
 
 def wound_measures(sheet):
@@ -80,3 +78,43 @@ def wound_measures(sheet):
         "wound_perimeter": float(sheet.face_df.loc[d, "perimeter"]),
         "num_cells_wound_edge": int(sheet.edge_df.loc[we, "face"].nunique()),
     }
+
+
+def wound_record(sheet, t):
+    """Wound measures at time t, as a row of the wound time course"""
+    return {"time": t, "time_after_ablation": t - sheet.settings["TInitAblation"], **wound_measures(sheet)}
+
+
+def wound_features(wound_timecourse):
+    """
+    Features of a wound time course, used to compare and calibrate simulations
+    :param wound_timecourse: DataFrame with 'time_after_ablation' and 'wound_area'
+    :return: dict with
+        recoil: initial expansion rate, (A(t1) - A0) / (A0 t1) at the first record (1/min)
+        max_wound_area: max(A) / A0
+        time_max_wound_area: time after ablation of the maximum (min)
+        healing_rate: slope of A / A0 after the maximum (1/min, negative when closing)
+    """
+    t = wound_timecourse["time_after_ablation"].to_numpy()
+    area = wound_timecourse["wound_area"].to_numpy() / wound_timecourse["wound_area"].iloc[0]
+    i_max = int(np.argmax(area))
+    healing_rate = np.polyfit(t[i_max:], area[i_max:], 1)[0] if len(t) - i_max > 1 else 0.0
+    return {
+        "recoil": float((area[1] - 1) / t[1]) if len(t) > 1 else 0.0,
+        "max_wound_area": float(area[i_max]),
+        "time_max_wound_area": float(t[i_max]),
+        "healing_rate": float(healing_rate),
+    }
+
+
+def calibration_error(features, targets, weights=None):
+    """
+    Squared relative error between simulated features and target features
+    :param features: dict from wound_features
+    :param targets: dict with the target values of some features, e.g. {'max_wound_area': 1.65}
+    :param weights: optional dict with the weight of each feature (default 1)
+    :return: error (0 if all the targets are matched)
+    """
+    weights = weights or {}
+    return sum(weights.get(name, 1.0) * ((features[name] - target) / target) ** 2
+               for name, target in targets.items())

@@ -6,6 +6,7 @@ import warnings
 import src.auxFunctions as auxFunctions
 import src.inputMechanicalParameters as inputMechanicalParameters
 import src.vertexModel as vertexModel
+import src.wound as wound
 
 from tyssue.draw import sheet_view
 
@@ -23,15 +24,18 @@ for height in HEIGHTS:
     [cellmap_init, geom, energyContributions_model] = vertexModel.initialize(periodic=True)
 
     # Update mechanical parameters
-    cellmap_init = inputMechanicalParameters.update(cellmap_init)
+    cellmap_init = inputMechanicalParameters.update(cellmap_init, cell_height=height)
 
     # Initial stage
     energyContributions_model.compute_energy(cellmap_init)
 
-    # RUN
-    # with_t3=True enables type 3 transitions at free borders (e.g. wound edges)
-    [cellmap_H, geom, model_H, history_H] = vertexModel.solveEuler(cellmap_init, geom, energyContributions_model,
-                                                                   endTime=cellmap_init.settings["tend"], with_t3=False)
+    # Relax geometry
+    [cellmap_relaxed, geom, model_relaxed, history_relaxed] = vertexModel.solve_until_relaxed(cellmap_init, geom, energyContributions_model)
+
+    # Wound healing, starting from the relaxed tissue
+    [cellmap_H, geom, model_H, history_H, wound_timecourse] = vertexModel.solve_with_ablation(cellmap_relaxed, geom, model_relaxed)
+    wound_timecourse.to_csv(os.path.join(output_folder, 'wound_timecourse.csv'), index=False)
+    print(height, wound.wound_features(wound_timecourse))
 
     fig, ax = sheet_view(cellmap_H, ['y', 'x'], edge={"color": 1, 'colormap': 'Greys'})
 

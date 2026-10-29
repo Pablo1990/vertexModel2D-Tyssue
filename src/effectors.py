@@ -48,9 +48,9 @@ class WoundContractility(AbstractEffector):
 
     @staticmethod
     def gradient(eptm):
-        k = to_nd(wound_edge_tension(eptm), 2)
-        u = eptm.edge_df[["ux", "uy"]].to_numpy()
-        g_s = pd.DataFrame(-u * k, index=eptm.edge_df.index, columns=["gx", "gy"])
+        k = to_nd(wound_edge_tension(eptm), eptm.dim)
+        u = eptm.edge_df[eptm.ucoords].to_numpy()
+        g_s = pd.DataFrame(-u * k, index=eptm.edge_df.index, columns=["g" + c for c in eptm.coords])
         return g_s, -g_s
 
 

@@ -2,10 +2,12 @@ import numpy as np
 
 import src.auxFunctions as auxFunctions
 
-def update(cellmap, cell_height=15.0):
+def update(cellmap, cell_height=15.0, params=None):
     """
-
+    Set the default mechanical parameters
     :param cellmap:
+    :param cell_height:
+    :param params: optional dict {name: value} overwriting the defaults (see set_parameters)
     :return:
     """
     # Stochastically detaches vertices from rosettes.
@@ -40,6 +42,27 @@ def update(cellmap, cell_height=15.0):
     # Per vertex:
     cellmap.vert_df["viscosity"] = 0.07
 
+    if params:
+        cellmap = set_parameters(cellmap, params)
+
+    return cellmap
+
+
+def set_parameters(cellmap, params):
+    """
+    Overwrite parameters by name, e.g. when calibrating: a column of face_df, vert_df or
+    edge_df if it exists, otherwise a setting
+    :param cellmap:
+    :param params: dict {name: value}, e.g. {'purseStringStrength': 2e-5, 'vol_elasticity': 0.5}
+    :return:
+    """
+    for name, value in params.items():
+        for df in (cellmap.face_df, cellmap.vert_df, cellmap.edge_df):
+            if name in df.columns:
+                df[name] = value
+                break
+        else:
+            cellmap.settings[name] = value
     return cellmap
 
 # --- Time profile of the wound contractility (KgContractility) -------------------
@@ -47,10 +70,10 @@ _PS_PROFILE = np.array([1.0, 0.96, 1.007, 1.74, 2.37, 2.61, 2.487, 2.536, 2.46, 
                         2.606, 2.606, 2.606, 2.606, 2.606, 2.606, 2.606, 2.606]) - 1
 
 def wound_contractility(cellmap, t):
-    """(C_ps, C_lc) at time t, as get_contractility_based_on_location() in 3D."""
+    """Purse string tension at time t, as get_contractility_based_on_location() in 3D."""
     t_after = t - cellmap.settings["TInitAblation"]
     if t_after < 0:
-        return cellmap.settings["cLineTension"], cellmap.settings["p.cLineTension"]
+        return cellmap.settings["cLineTension"]
     if cellmap.settings["TypeOfPurseString"] == 0:
         times = np.arange(0, 60 + 3, 3) / 60 * (cellmap.settings["TEndAblation"] - cellmap.settings["TInitAblation"])
         ps = np.interp(t_after, times, _PS_PROFILE / _PS_PROFILE.max() * cellmap.settings["purseStringStrength"])
