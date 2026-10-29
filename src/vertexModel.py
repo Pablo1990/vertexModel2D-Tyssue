@@ -9,6 +9,7 @@ from tyssue.solvers import QSSolver
 from tyssue.solvers.viscous import EulerSolver
 
 import src.brownianMotion as brownianMotion
+from effectors import EFFECTORS
 from periodic import periodic_voronoi_sheet
 
 
@@ -21,7 +22,7 @@ def initialize(numCellRows=100, noiseCellShape=0.27, periodic=False):
     # https://tyssue.readthedocs.io/en/latest/_modules/tyssue/dynamics/effectors.html
     energyContributions_model = model_factory([
         effectors.FaceVolumeElasticity,
-        effectors.LineTension,
+        # effectors.LineTension,
         # effectors.LengthElasticity,
         effectors.PerimeterElasticity,
         # effectors.CellAreaElasticity,
@@ -29,6 +30,7 @@ def initialize(numCellRows=100, noiseCellShape=0.27, periodic=False):
         # effectors.BarrierElasticity
         # effectors.LineViscosity
         # effectors.BorderElasticity
+        EFFECTORS[0],
     ])
 
     if not periodic:

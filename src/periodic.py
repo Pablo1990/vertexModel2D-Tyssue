@@ -151,21 +151,3 @@ def periodic_reconnect(sheet, manager, **kwargs):
     periodic_merge_vertices(sheet)
     periodic_detach_vertices(sheet)
     manager.append(periodic_reconnect, **kwargs)
-
-
-def periodic_store_sheet(name="planar_periodic8x8", identifier="periodic_store"):
-    """Periodic tissue shipped with tyssue (tyssue/stores/<name>.hf5), e.g. the 8x8
-    hexagonal 'planar_periodic8x8' (64 cells, box [-0.1, 8] x [-0.1, 8])."""
-    import os
-
-    from tyssue.io.hdf5 import load_datasets
-    from tyssue.stores import stores_dir
-
-    datasets = load_datasets(os.path.join(stores_dir, f"{name}.hf5"))
-    specs = getattr(config.stores, name)()
-    sheet = Sheet(identifier, datasets, specs)
-    sheet.vert_df["is_active"] = 1  # periodic: no vertex is fixed
-    sheet.reset_index(order=True)
-    sheet.reset_topo()
-    PlanarGeometry.update_all(sheet)
-    return sheet
