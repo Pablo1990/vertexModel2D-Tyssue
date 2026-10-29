@@ -145,9 +145,10 @@ def periodic_detach_vertices(sheet, geom=PlanarGeometry):
     return bool(len(to_detach))
 
 
-def periodic_reconnect(sheet, manager, **kwargs):
-    """Drop-in for tyssue.behaviors.sheet.basic_events.reconnect (periodic-safe)."""
+def periodic_reconnect(sheet, manager, geom=PlanarGeometry, **kwargs):
+    """Drop-in for tyssue.behaviors.sheet.basic_events.reconnect (periodic-safe).
+    geom: the sheet's geometry class (PlanarGeometry for 2D, SheetGeometry for 2.5D)"""
     sheet.settings.update(kwargs)
-    periodic_merge_vertices(sheet)
-    periodic_detach_vertices(sheet)
-    manager.append(periodic_reconnect, **kwargs)
+    periodic_merge_vertices(sheet, geom)
+    periodic_detach_vertices(sheet, geom)
+    manager.append(periodic_reconnect, geom=geom, **kwargs)

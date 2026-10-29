@@ -196,7 +196,7 @@ def create_solver(cellMap, geom, energyContributions_model, history, manager):
     """
     periodic = cellMap.settings.get("boundaries") is not None
     if periodic:
-        manager.append(periodic_reconnect)
+        manager.append(periodic_reconnect, geom=geom)
 
     return EulerSolver(cellMap,
                        geom,
