@@ -2,7 +2,7 @@ import copy
 
 import numpy as np
 import pandas as pd
-from tyssue import SheetGeometry, Sheet, History
+from tyssue import SheetGeometry, Sheet, History, config
 from tyssue.behaviors import EventManager
 from tyssue.draw import sheet_view
 from tyssue.dynamics import effectors, model_factory
@@ -15,9 +15,17 @@ from src.effectors import EFFECTORS
 from src.periodic import periodic_reconnect, periodic_voronoi_sheet
 
 
-def initialize(numCellRows=100, noiseCellShape=0.27, periodic=False):
+def initialize(numCellRows=100, noiseCellShape=0.27, periodic=False, fixedHeight=False):
     """
-    Initialize the model
+    Initialize the model: a 2.5D apical sheet (SheetGeometry, 'flat'), where each vertex has a
+    height = z - basal_shift and each cell a volume = height * area
+
+    :param numCellRows:
+    :param noiseCellShape:
+    :param periodic: periodic tissue (no free border)
+    :param fixedHeight: if True, the vertices only move in the plane, so the cell height is
+        fixed (V = hA with a constant h). If False, the volume term also moves the vertices in z,
+        so the cells change their height
     :return:
     """
     ## Defining energy contributions
@@ -49,8 +57,15 @@ def initialize(numCellRows=100, noiseCellShape=0.27, periodic=False):
         except Exception:
             cellMap.sanitize(trim_borders=True, order_edges=True)
     else:
-        # periodic: no border to trim
+        # periodic: no border to trim. The sheet is planar (x, y): add z, height and basal_shift
         cellMap = periodic_voronoi_sheet(n_cells=numCellRows, cell_area=1.0)
+        cellMap.update_specs(config.geometry.sheet_spec())
+        cellMap = Sheet(cellMap.identifier, cellMap.datasets, cellMap.specs)
+
+    # Height measured along z from basal_shift (the default 'cylindrical' uses the distance to the z axis)
+    cellMap.settings["geometry"] = "flat"
+    cellMap.settings["fixed_height"] = fixedHeight
+    cellMap.vert_df["z"] = 0.0
     cellMap.reset_index()
     cellMap.reset_topo()
 
@@ -69,7 +84,47 @@ def initialize(numCellRows=100, noiseCellShape=0.27, periodic=False):
     ## Connect cells with energy contributions
     cellMap.update_specs(energyContributions_model.specs)
 
+    if fixedHeight:
+        energyContributions_model = freeze_height(energyContributions_model)
+
     return [cellMap, geom, energyContributions_model]
+
+
+def freeze_height(energyContributions_model):
+    """
+    Keep only the in-plane forces, so the vertices don't move in z and the cell height is fixed
+
+    :param energyContributions_model: model from model_factory
+    :return:
+    """
+    compute_gradient = energyContributions_model.compute_gradient
+
+    def in_plane_gradient(eptm, components=False):
+        grad = compute_gradient(eptm, components)
+        if not components:
+            grad["gz"] = 0.0
+        return grad
+
+    energyContributions_model.compute_gradient = staticmethod(in_plane_gradient)
+    return energyContributions_model
+
+
+def tissue_record(cellMap, t):
+    """
+    Mean cell shape at time t: height, apical area and aspect ratio (height / sqrt(area))
+
+    :param cellMap:
+    :param t:
+    :return:
+    """
+    alive = cellMap.face_df[cellMap.face_df["is_alive"] == 1]
+    return {
+        "time": t,
+        "height": alive["height"].mean(),
+        "area": alive["area"].mean(),
+        "aspect_ratio": (alive["height"] / np.sqrt(alive["area"])).mean(),
+        "vol": alive["vol"].mean(),
+    }
 
 
 def on_topo_change(sheet):
@@ -192,7 +247,9 @@ def solve_until_relaxed(cellMap, geom, energyContributions_model, tol=1e-3, maxT
     :param energyContributions_model:
     :param tol: relaxed when the mean vertex speed (distance per minute) is below tol
     :param maxTime: maximum simulated time (minutes)
-    :return:
+    :return: [cellMap, geom, energyContributions_model, history, relaxTimecourse]
+        relaxTimecourse: DataFrame with the mean vertex speed, cell height, area and aspect
+        ratio every 'record_every' minutes
     """
     dt = cellMap.settings["dt"]
     checkEvery = cellMap.settings["record_every"]
@@ -207,11 +264,14 @@ def solve_until_relaxed(cellMap, geom, energyContributions_model, tol=1e-3, maxT
     ## Run until the vertices stop moving
     t = 0.0
     speed = np.inf
+    geom.update_all(cellMap)
+    relaxTimecourse = [{**tissue_record(cellMap, t), "speed": np.nan}]
     while t < maxTime and speed > tol:
         previousPositions = cellMap.vert_df[cellMap.coords].copy()
         run_until(solver, t + checkEvery, dt)
         t += checkEvery
         speed = mean_vertex_speed(cellMap, previousPositions, checkEvery)
+        relaxTimecourse.append({**tissue_record(cellMap, t), "speed": speed})
 
     print(f"Relaxation stopped at t = {t:g} min, mean vertex speed = {speed:.2e}")
 
@@ -219,7 +279,7 @@ def solve_until_relaxed(cellMap, geom, energyContributions_model, tol=1e-3, maxT
     cellMap_new = copy.deepcopy(cellMap)
     history_new = copy.deepcopy(history_cellMap)
 
-    return [cellMap_new, geom, energyContributions_model, history_new]
+    return [cellMap_new, geom, energyContributions_model, history_new, pd.DataFrame(relaxTimecourse)]
 
 
 def wound_healing_event(sheet, manager, tAblation, woundTimecourse):

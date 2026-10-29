@@ -14,6 +14,7 @@ from tyssue.draw import sheet_view
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 HEIGHTS = [0.15, 1.5, 7.5, 15.0, 30.0]
+FIXED_HEIGHT = False  # True: vertices only move in the plane (V = hA with a constant h)
 
 for height in HEIGHTS:
     output_folder = os.path.join('results', 'wound_healing', str(height))
@@ -21,7 +22,7 @@ for height in HEIGHTS:
         os.makedirs(output_folder)
 
     # Initialize Model
-    [cellmap_init, geom, energyContributions_model] = vertexModel.initialize(periodic=True)
+    [cellmap_init, geom, energyContributions_model] = vertexModel.initialize(periodic=True, fixedHeight=FIXED_HEIGHT)
 
     # Update mechanical parameters
     cellmap_init = inputMechanicalParameters.update(cellmap_init, cell_height=height)
@@ -30,7 +31,9 @@ for height in HEIGHTS:
     energyContributions_model.compute_energy(cellmap_init)
 
     # Relax geometry
-    [cellmap_relaxed, geom, model_relaxed, history_relaxed] = vertexModel.solve_until_relaxed(cellmap_init, geom, energyContributions_model)
+    [cellmap_relaxed, geom, model_relaxed, history_relaxed, relax_timecourse] = vertexModel.solve_until_relaxed(cellmap_init, geom, energyContributions_model)
+    relax_timecourse.to_csv(os.path.join(output_folder, 'relax_timecourse.csv'), index=False)
+    print(height, relax_timecourse.iloc[[0, -1]][['time', 'height', 'area', 'aspect_ratio']].to_string(index=False))
 
     # Wound healing, starting from the relaxed tissue
     [cellmap_H, geom, model_H, history_H, wound_timecourse] = vertexModel.solve_with_ablation(cellmap_relaxed, geom, model_relaxed)

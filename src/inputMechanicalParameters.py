@@ -30,9 +30,12 @@ def update(cellmap, cell_height=15.0, params=None):
     cellmap.settings["cLineTension"] = 0.0
 
     # Face Volume Elasticity
-    cellmap.face_df["vol_elasticity"] = 1.0
-    cellmap.face_df["prefered_vol"] = cellmap.face_df["area"].mean() * 0.95
-    cellmap.vert_df["height"] = cell_height
+    # Energy 1/2 lambdaV ((V - V0) / V0)^2, as in the 3D model: vol_elasticity = lambdaV / V0^2
+    # (set below, after the optional params, so lambdaV and prefered_vol can be calibrated)
+    cellmap.settings["lambdaV"] = 1.0
+    cellmap.face_df["prefered_vol"] = cellmap.face_df["area"].mean() * 0.95 * cell_height
+    # SheetGeometry ('flat'): height = z - basal_shift, recomputed at every update
+    cellmap.vert_df["basal_shift"] = cellmap.vert_df["z"] - cell_height
 
     # PerimeterElasticity
     cellmap.face_df["perimeter"] = 1
@@ -45,6 +48,8 @@ def update(cellmap, cell_height=15.0, params=None):
     if params:
         cellmap = set_parameters(cellmap, params)
 
+    cellmap.face_df["vol_elasticity"] = cellmap.settings["lambdaV"] / cellmap.face_df["prefered_vol"] ** 2
+
     return cellmap
 
 
@@ -53,7 +58,7 @@ def set_parameters(cellmap, params):
     Overwrite parameters by name, e.g. when calibrating: a column of face_df, vert_df or
     edge_df if it exists, otherwise a setting
     :param cellmap:
-    :param params: dict {name: value}, e.g. {'purseStringStrength': 2e-5, 'vol_elasticity': 0.5}
+    :param params: dict {name: value}, e.g. {'purseStringStrength': 2e-5, 'lambdaV': 0.5}
     :return:
     """
     for name, value in params.items():
