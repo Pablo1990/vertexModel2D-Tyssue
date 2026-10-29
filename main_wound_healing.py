@@ -1,3 +1,4 @@
+import json
 import os
 import warnings
 
@@ -16,6 +17,13 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 HEIGHTS = [0.15, 1.5, 7.5, 15.0, 30.0]
 FIXED_HEIGHT = True  # True: vertices only move in the plane (V = hA with a constant h)
 
+# Calibration with experimental data, at the wing disc height
+INPUT_FOLDER = 'input'
+WOUND_AREA_FILE = os.path.join(INPUT_FOLDER, 'wound_area.csv')  # columns: time_after_ablation (min), wound_area
+CALIBRATED_PARAMETER = 'line_tension_norm'  # Farhadifar: or 'contractility_norm', 'lambdaV'
+TIME_AFTER_ABLATION = 6.0  # minutes, wound area compared at this time
+EDGE_RECOIL = None  # initial recoil velocity after an edge ablation (length / min); None: not used
+
 for height in HEIGHTS:
     output_folder = os.path.join('results', 'wound_healing', str(height))
     output_folder_relaxed = os.path.join(output_folder, 'relaxing')
@@ -24,11 +32,33 @@ for height in HEIGHTS:
         os.makedirs(output_folder_ablation)
         os.makedirs(output_folder_relaxed)
 
+    # Calibrated values, saved once and used by every following run (delete the file to recalibrate)
+    CALIBRATED_PARAMETERS_FILE = os.path.join(output_folder, 'calibrated_parameters.json')
+
+    if os.path.exists(CALIBRATED_PARAMETERS_FILE):
+        with open(CALIBRATED_PARAMETERS_FILE) as f:
+            params = json.load(f)
+        print(f"Using the calibrated parameters {params} from {CALIBRATED_PARAMETERS_FILE}")
+    else:
+        targets = {}
+        targets['wound_area'] = 165  # relative wound area (%) at TIME_AFTER_ABLATION: 100 * A(t) / A(0)
+        if EDGE_RECOIL is not None:
+            targets['edge_recoil'] = EDGE_RECOIL
+        [best_value, calibration] = vertexModel.calibrate(height, targets, CALIBRATED_PARAMETER,
+                                                          fixedHeight=FIXED_HEIGHT,
+                                                          timeAfterAblation=TIME_AFTER_ABLATION)
+        params = {CALIBRATED_PARAMETER: float(best_value)}
+        os.makedirs(os.path.dirname(CALIBRATED_PARAMETERS_FILE), exist_ok=True)
+        calibration.to_csv(os.path.join(output_folder, 'calibration.csv'), index=False)
+        with open(CALIBRATED_PARAMETERS_FILE, 'w') as f:
+            json.dump(params, f, indent=2)
+        print(f"Calibrated {params} for targets {targets}, saved in {CALIBRATED_PARAMETERS_FILE}")
+
     # Initialize Model
     [cellmap_init, geom, energyContributions_model] = vertexModel.initialize(periodic=True, fixedHeight=FIXED_HEIGHT)
 
     # Update mechanical parameters
-    cellmap_init = inputMechanicalParameters.update(cellmap_init, cell_height=height)
+    cellmap_init = inputMechanicalParameters.update(cellmap_init, cell_height=height, params=params)
 
     # Initial stage
     energyContributions_model.compute_energy(cellmap_init)
