@@ -1,4 +1,5 @@
 import copy
+import json
 
 import numpy as np
 import pandas as pd
@@ -6,6 +7,7 @@ from tyssue import SheetGeometry, Sheet, History, config
 from tyssue.behaviors import EventManager
 from tyssue.draw import sheet_view
 from tyssue.dynamics import effectors, model_factory
+from tyssue.io import hdf5
 from scipy.optimize import minimize_scalar
 from tyssue.solvers import QSSolver
 from tyssue.solvers.viscous import EulerSolver
@@ -30,22 +32,7 @@ def initialize(numCellRows=200, noiseCellShape=0.27, periodic=False, fixedHeight
         so the cells change their height
     :return:
     """
-    ## Defining energy contributions
-    # https://tyssue.readthedocs.io/en/latest/_modules/tyssue/dynamics/effectors.html
-    # Farhadifar et al. 2007: E = sum K/2 (A - A0)^2 + sum Lambda l + sum Gamma/2 P^2
-    # (here the area term is the cell volume, V = hA)
-    energyContributions_model = model_factory([
-        effectors.FaceVolumeElasticity,  # resists volume changes
-        effectors.LineTension,  # contracts the edges: what recoils after an edge ablation
-        # effectors.LengthElasticity,
-        # effectors.PerimeterElasticity,
-        # effectors.CellAreaElasticity,
-        effectors.FaceContractility,  # perimeter contractility, maintains the cell shape
-        # effectors.BarrierElasticity
-        # effectors.LineViscosity
-        # effectors.BorderElasticity
-        EFFECTORS[0],
-    ])
+    energyContributions_model = create_model(fixedHeight)
 
     if not periodic:
         # noise = 0 -> hexagonal pattern
@@ -88,8 +75,61 @@ def initialize(numCellRows=200, noiseCellShape=0.27, periodic=False, fixedHeight
     ## Connect cells with energy contributions
     cellMap.update_specs(energyContributions_model.specs)
 
+    return [cellMap, geom, energyContributions_model]
+
+
+def create_model(fixedHeight=False):
+    """
+    Energy of the model, Farhadifar et al. 2007: E = sum K/2 (A - A0)^2 + sum Lambda l + sum Gamma/2 P^2
+    (here the area term is the cell volume, V = hA)
+    https://tyssue.readthedocs.io/en/latest/_modules/tyssue/dynamics/effectors.html
+
+    :param fixedHeight: if True, only in-plane forces (see freeze_height)
+    :return:
+    """
+    energyContributions_model = model_factory([
+        effectors.FaceVolumeElasticity,  # resists volume changes
+        effectors.LineTension,  # contracts the edges: what recoils after an edge ablation
+        effectors.FaceContractility,  # perimeter contractility, maintains the cell shape
+        EFFECTORS[0],  # wound contractility (purse string)
+    ])
+
     if fixedHeight:
         energyContributions_model = freeze_height(energyContributions_model)
+
+    return energyContributions_model
+
+
+def save_state(cellMap, fileName):
+    """
+    Save the tissue to reproduce or continue the simulation later (see load_state):
+    <fileName>.hf5 with the vertices, edges and faces, and <fileName>_specs.json with
+    the settings and default values (all the parameters, time step, height mode...)
+
+    :param cellMap:
+    :param fileName: path without extension
+    :return:
+    """
+    hdf5.save_datasets(fileName + ".hf5", cellMap)
+    with open(fileName + "_specs.json", "w") as f:
+        json.dump(cellMap.specs, f, indent=2, default=lambda value: value.item() if hasattr(value, "item") else str(value))
+
+
+def load_state(fileName):
+    """
+    Load a tissue saved with save_state, ready to be simulated
+
+    :param fileName: path without extension
+    :return: [cellMap, geom, energyContributions_model]
+    """
+    datasets = hdf5.load_datasets(fileName + ".hf5", data_names=["vert", "edge", "face"])
+    with open(fileName + "_specs.json") as f:
+        specs = json.load(f)
+
+    cellMap = Sheet("tissue", datasets, specs)
+    geom = SheetGeometry
+    geom.update_all(cellMap)
+    energyContributions_model = create_model(cellMap.settings.get("fixed_height", False))
 
     return [cellMap, geom, energyContributions_model]
 
@@ -189,7 +229,8 @@ def solveEuler(cellMap, geom, energyContributions_model, endTime, dt=1, with_t3=
 
 def create_solver(cellMap, geom, energyContributions_model, history, manager):
     """
-    EulerSolver with T1 transitions (periodic-safe T1s on periodic sheets)
+    EulerSolver with T1 transitions (periodic-safe T1s on periodic sheets), unless
+    settings['remodelling'] is False
 
     :param cellMap:
     :param geom:
@@ -198,8 +239,9 @@ def create_solver(cellMap, geom, energyContributions_model, history, manager):
     :param manager:
     :return:
     """
+    remodelling = cellMap.settings.get("remodelling", True)
     periodic = cellMap.settings.get("boundaries") is not None
-    if periodic:
+    if remodelling and periodic:
         manager.append(periodic_reconnect, geom=geom)
 
     return EulerSolver(cellMap,
@@ -207,7 +249,7 @@ def create_solver(cellMap, geom, energyContributions_model, history, manager):
                        energyContributions_model,
                        history=history,
                        manager=manager,
-                       auto_reconnect=not periodic)
+                       auto_reconnect=remodelling and not periodic)
 
 
 def run_until(solver, endTime, dt):
@@ -393,6 +435,67 @@ def calibrate(height, targets, paramName="line_tension_norm", bounds=(1e-3, 1.0)
                              options={"maxiter": maxIterations, "xatol": 0.01})
 
     return [10 ** result.x, pd.DataFrame(evaluations)]
+
+
+def wound_area_rate(cellMap, geom, energyContributions_model, woundTension, dtProbe=1e-4):
+    """
+    Instantaneous rate of change of the wound area for a given wound tension, without
+    modifying the tissue: one small Euler step on a copy
+
+    :param cellMap: ablated tissue
+    :param geom:
+    :param energyContributions_model:
+    :param woundTension: tension on the wound edges (purse string)
+    :param dtProbe: time step of the probe (minutes)
+    :return: dA/dt (area per minute)
+    """
+    probe = copy.deepcopy(cellMap)
+    probe.settings["wound_tension"] = woundTension
+    geom.update_all(probe)
+    initialArea = wound.wound_measures(probe)["wound_area"]
+
+    gradient = energyContributions_model.compute_gradient(probe).loc[probe.vert_df.index]
+    velocity = -gradient[["g" + c for c in probe.coords]].to_numpy() / probe.vert_df[["viscosity"]].to_numpy()
+    probe.vert_df[probe.coords] += dtProbe * velocity
+    geom.update_all(probe)
+
+    return (wound.wound_measures(probe)["wound_area"] - initialArea) / dtProbe
+
+
+def required_purse_string(cellMap, geom, energyContributions_model, timeAfterAblation=0.1):
+    """
+    Minimum purse string strength for the wound to start closing at timeAfterAblation,
+    as VertexModel.required_purse_string_strength in the 3D model: ablate, simulate without
+    contractility nor remodelling until timeAfterAblation, then find the purse string for
+    which dA/dt = 0. The wound area rate is linear in the purse string, so the value is exact
+
+    :param cellMap: relaxed tissue (not modified)
+    :param geom:
+    :param energyContributions_model:
+    :param timeAfterAblation: minutes
+    :return: dict with the recoil (dA/dt without purse string, area per minute and % per minute)
+        and the required purse string strength
+    """
+    woundedMap = copy.deepcopy(cellMap)
+    woundedMap.settings["TypeOfPurseString"] = 3  # constant
+    woundedMap.settings["purseStringStrength"] = 0.0
+    woundedMap.settings["remodelling"] = False
+    woundedMap.settings["tend"] = woundedMap.settings["TInitAblation"] + timeAfterAblation
+    [woundedMap, geom, energyContributions_model, _, woundTimecourse] = solve_with_ablation(
+        woundedMap, geom, energyContributions_model)
+
+    referenceTension = 1e-3
+    recoil = wound_area_rate(woundedMap, geom, energyContributions_model, 0.0)
+    rateWithTension = wound_area_rate(woundedMap, geom, energyContributions_model, referenceTension)
+    purseString = -recoil / (rateWithTension - recoil) * referenceTension
+
+    initialArea = woundTimecourse["wound_area"].iloc[0]
+    return {
+        "time_after_ablation": timeAfterAblation,
+        "recoil": recoil,
+        "recoil_percentage": 100 * recoil / initialArea,
+        "purse_string_strength": purseString,
+    }
 
 
 def solveStepByStep(cellMap, geom, energyContributions_model, endTime):

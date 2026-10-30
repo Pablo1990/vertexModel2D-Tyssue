@@ -2,6 +2,9 @@ import json
 import os
 import warnings
 
+import numpy as np
+import pandas as pd
+
 # Import the project modules first: src/__init__.py silences the
 # "install tyssue[viz]" warnings (ipyvolume/vispy are not needed here)
 import src.auxFunctions as auxFunctions
@@ -16,6 +19,16 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 
 HEIGHTS = [0.15, 1.5, 7.5, 15.0, 30.0]
 FIXED_HEIGHT = True  # True: vertices only move in the plane (V = hA with a constant h)
+PERIODIC = True
+NUM_CELLS = 200
+SEED = 0  # random T1 detachments: same seed, same simulation
+PURSE_STRING_TIME = 0.1  # minutes after ablation where the required purse string is computed
+
+# Each height folder keeps what is needed to reproduce or continue its simulation:
+#   simulation.json                 inputs (height, height mode, tissue, seed, calibrated params)
+#   relaxed_state.hf5 / _specs.json tissue before the ablation
+#   final_state.hf5 / _specs.json   tissue at the end of the wound healing
+# Load a state with: [cellMap, geom, model] = vertexModel.load_state(os.path.join(folder, 'relaxed_state'))
 
 # Calibration with experimental data, at the wing disc height
 INPUT_FOLDER = 'input'
@@ -24,7 +37,9 @@ CALIBRATED_PARAMETER = 'line_tension_norm'  # Farhadifar: or 'contractility_norm
 TIME_AFTER_ABLATION = 6.0  # minutes, wound area compared at this time
 EDGE_RECOIL = None  # initial recoil velocity after an edge ablation (length / min); None: not used
 
+purse_strings = []
 for height in HEIGHTS:
+    print(f"---- Height {height} ----")
     output_folder = os.path.join('results', 'wound_healing', str(height))
     output_folder_relaxed = os.path.join(output_folder, 'relaxing')
     output_folder_ablation = os.path.join(output_folder, 'ablation')
@@ -40,10 +55,11 @@ for height in HEIGHTS:
             params = json.load(f)
         print(f"Using the calibrated parameters {params} from {CALIBRATED_PARAMETERS_FILE}")
     else:
-        targets = {}
-        targets['wound_area'] = 165  # relative wound area (%) at TIME_AFTER_ABLATION: 100 * A(t) / A(0)
         if EDGE_RECOIL is not None:
-            targets['edge_recoil'] = EDGE_RECOIL
+            targets = {'edge_recoil': EDGE_RECOIL}
+        else:
+            targets = {'wound_area': 165}
+
         [best_value, calibration] = vertexModel.calibrate(height, targets, CALIBRATED_PARAMETER,
                                                           fixedHeight=FIXED_HEIGHT,
                                                           timeAfterAblation=TIME_AFTER_ABLATION)
@@ -54,8 +70,15 @@ for height in HEIGHTS:
             json.dump(params, f, indent=2)
         print(f"Calibrated {params} for targets {targets}, saved in {CALIBRATED_PARAMETERS_FILE}")
 
+    # Inputs needed to reproduce this simulation
+    with open(os.path.join(output_folder, 'simulation.json'), 'w') as f:
+        json.dump({'height': height, 'fixed_height': FIXED_HEIGHT, 'periodic': PERIODIC,
+                   'num_cells': NUM_CELLS, 'seed': SEED, 'params': params}, f, indent=2)
+    np.random.seed(SEED)
+
     # Initialize Model
-    [cellmap_init, geom, energyContributions_model] = vertexModel.initialize(periodic=True, fixedHeight=FIXED_HEIGHT)
+    [cellmap_init, geom, energyContributions_model] = vertexModel.initialize(numCellRows=NUM_CELLS, periodic=PERIODIC,
+                                                                             fixedHeight=FIXED_HEIGHT)
 
     # Update mechanical parameters
     cellmap_init = inputMechanicalParameters.update(cellmap_init, cell_height=height, params=params)
@@ -66,6 +89,13 @@ for height in HEIGHTS:
     # Relax geometry
     [cellmap_relaxed, geom, model_relaxed, history_relaxed, relax_timecourse] = vertexModel.solve_until_relaxed(cellmap_init, geom, energyContributions_model)
     relax_timecourse.to_csv(os.path.join(output_folder, 'relax_timecourse.csv'), index=False)
+    vertexModel.save_state(cellmap_relaxed, os.path.join(output_folder, 'relaxed_state'))
+
+    # Purse string needed for the wound to start closing, PURSE_STRING_TIME minutes after ablation
+    purse_string = vertexModel.required_purse_string(cellmap_relaxed, geom, model_relaxed, PURSE_STRING_TIME)
+    purse_strings.append({'height': height, **purse_string})
+    pd.DataFrame(purse_strings).to_csv(os.path.join('results', 'wound_healing', 'required_purse_string.csv'), index=False)
+    print(height, purse_string)
     print(height, relax_timecourse.iloc[[0, -1]][['time', 'height', 'area', 'aspect_ratio']].to_string(index=False))
 
     fig, ax = sheet_view(cellmap_relaxed, ['y', 'x'], edge={"color": 1, 'colormap': 'Greys'})
@@ -77,6 +107,7 @@ for height in HEIGHTS:
     # Wound healing, starting from the relaxed tissue
     [cellmap_H, geom, model_H, history_H, wound_timecourse] = vertexModel.solve_with_ablation(cellmap_relaxed, geom, model_relaxed)
     wound_timecourse.to_csv(os.path.join(output_folder, 'wound_timecourse.csv'), index=False)
+    vertexModel.save_state(cellmap_H, os.path.join(output_folder, 'final_state'))
     print(height, wound.wound_features(wound_timecourse))
 
     fig, ax = sheet_view(cellmap_H, ['y', 'x'], edge={"color": 1, 'colormap': 'Greys'})
