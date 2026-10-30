@@ -18,7 +18,10 @@ from tyssue.draw import sheet_view
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 HEIGHTS = [0.15, 1.5, 7.5, 15.0, 30.0]
-FIXED_HEIGHT = True  # True: vertices only move in the plane (V = hA with a constant h)
+# vertexModel.FARHADIFAR: volume + line tension + perimeter contractility
+# vertexModel.EFFECTIVE_2D: apical = basal polygon with fixed height, V = hA, lateral area hP recoils
+MODEL = vertexModel.EFFECTIVE_2D
+FIXED_HEIGHT = True  # True: vertices only move in the plane (V = hA with a constant h). Always True for EFFECTIVE_2D
 PERIODIC = True
 NUM_CELLS = 200
 SEED = 0  # random T1 detachments: same seed, same simulation
@@ -33,14 +36,20 @@ PURSE_STRING_TIME = 0.1  # minutes after ablation where the required purse strin
 # Calibration with experimental data, at the wing disc height
 INPUT_FOLDER = 'input'
 WOUND_AREA_FILE = os.path.join(INPUT_FOLDER, 'wound_area.csv')  # columns: time_after_ablation (min), wound_area
-CALIBRATED_PARAMETER = 'line_tension_norm'  # Farhadifar: or 'contractility_norm', 'lambdaV'
+# Parameter calibrated for each model and its search range
+CALIBRATION = {
+    vertexModel.FARHADIFAR: ('line_tension_norm', (1e-3, 1.0)),  # or 'contractility_norm', 'lambdaV'
+    vertexModel.EFFECTIVE_2D: ('lambdaS', (1e-2, 1e3)),  # lateral surface, or 'lambdaV'
+}
+CALIBRATED_PARAMETER, CALIBRATION_BOUNDS = CALIBRATION[MODEL]
+RESULTS_FOLDER = os.path.join('results', 'wound_healing', MODEL)
 TIME_AFTER_ABLATION = 6.0  # minutes, wound area compared at this time
 EDGE_RECOIL = None  # initial recoil velocity after an edge ablation (length / min); None: not used
 
 purse_strings = []
 for height in HEIGHTS:
     print(f"---- Height {height} ----")
-    output_folder = os.path.join('results', 'wound_healing', str(height))
+    output_folder = os.path.join(RESULTS_FOLDER, str(height))
     output_folder_relaxed = os.path.join(output_folder, 'relaxing')
     output_folder_ablation = os.path.join(output_folder, 'ablation')
     if not os.path.exists(output_folder_ablation):
@@ -61,8 +70,10 @@ for height in HEIGHTS:
             targets = {'wound_area': 165}
 
         [best_value, calibration] = vertexModel.calibrate(height, targets, CALIBRATED_PARAMETER,
+                                                          bounds=CALIBRATION_BOUNDS,
                                                           fixedHeight=FIXED_HEIGHT,
-                                                          timeAfterAblation=TIME_AFTER_ABLATION)
+                                                          timeAfterAblation=TIME_AFTER_ABLATION,
+                                                          modelType=MODEL)
         params = {CALIBRATED_PARAMETER: float(best_value)}
         os.makedirs(os.path.dirname(CALIBRATED_PARAMETERS_FILE), exist_ok=True)
         calibration.to_csv(os.path.join(output_folder, 'calibration.csv'), index=False)
@@ -72,13 +83,13 @@ for height in HEIGHTS:
 
     # Inputs needed to reproduce this simulation
     with open(os.path.join(output_folder, 'simulation.json'), 'w') as f:
-        json.dump({'height': height, 'fixed_height': FIXED_HEIGHT, 'periodic': PERIODIC,
+        json.dump({'model': MODEL, 'height': height, 'fixed_height': FIXED_HEIGHT, 'periodic': PERIODIC,
                    'num_cells': NUM_CELLS, 'seed': SEED, 'params': params}, f, indent=2)
     np.random.seed(SEED)
 
     # Initialize Model
     [cellmap_init, geom, energyContributions_model] = vertexModel.initialize(numCellRows=NUM_CELLS, periodic=PERIODIC,
-                                                                             fixedHeight=FIXED_HEIGHT)
+                                                                             fixedHeight=FIXED_HEIGHT, modelType=MODEL)
 
     # Update mechanical parameters
     cellmap_init = inputMechanicalParameters.update(cellmap_init, cell_height=height, params=params)
@@ -94,7 +105,7 @@ for height in HEIGHTS:
     # Purse string needed for the wound to start closing, PURSE_STRING_TIME minutes after ablation
     purse_string = vertexModel.required_purse_string(cellmap_relaxed, geom, model_relaxed, PURSE_STRING_TIME)
     purse_strings.append({'height': height, **purse_string})
-    pd.DataFrame(purse_strings).to_csv(os.path.join('results', 'wound_healing', 'required_purse_string.csv'), index=False)
+    pd.DataFrame(purse_strings).to_csv(os.path.join(RESULTS_FOLDER, 'required_purse_string.csv'), index=False)
     print(height, purse_string)
     print(height, relax_timecourse.iloc[[0, -1]][['time', 'height', 'area', 'aspect_ratio']].to_string(index=False))
 

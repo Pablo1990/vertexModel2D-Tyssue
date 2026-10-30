@@ -15,11 +15,15 @@ from tyssue.solvers.viscous import EulerSolver
 import src.brownianMotion as brownianMotion
 import src.inputMechanicalParameters as inputMechanicalParameters
 import src.wound as wound
-from src.effectors import EFFECTORS
+from src.effectors import EFFECTORS, LateralAreaElasticity
 from src.periodic import periodic_reconnect, periodic_voronoi_sheet
 
 
-def initialize(numCellRows=200, noiseCellShape=0.27, periodic=False, fixedHeight=False):
+FARHADIFAR = "farhadifar"
+EFFECTIVE_2D = "effective_2d"
+
+
+def initialize(numCellRows=200, noiseCellShape=0.27, periodic=False, fixedHeight=False, modelType=FARHADIFAR):
     """
     Initialize the model: a 2.5D apical sheet (SheetGeometry, 'flat'), where each vertex has a
     height = z - basal_shift and each cell a volume = height * area
@@ -30,9 +34,12 @@ def initialize(numCellRows=200, noiseCellShape=0.27, periodic=False, fixedHeight
     :param fixedHeight: if True, the vertices only move in the plane, so the cell height is
         fixed (V = hA with a constant h). If False, the volume term also moves the vertices in z,
         so the cells change their height
+    :param modelType: FARHADIFAR or EFFECTIVE_2D (see create_model). EFFECTIVE_2D always
+        has a fixed height
     :return:
     """
-    energyContributions_model = create_model(fixedHeight)
+    fixedHeight = fixedHeight or modelType == EFFECTIVE_2D
+    energyContributions_model = create_model(fixedHeight, modelType)
 
     if not periodic:
         # noise = 0 -> hexagonal pattern
@@ -56,6 +63,7 @@ def initialize(numCellRows=200, noiseCellShape=0.27, periodic=False, fixedHeight
     # Height measured along z from basal_shift (the default 'cylindrical' uses the distance to the z axis)
     cellMap.settings["geometry"] = "flat"
     cellMap.settings["fixed_height"] = fixedHeight
+    cellMap.settings["model"] = modelType
     cellMap.vert_df["z"] = 0.0
     cellMap.reset_index()
     cellMap.reset_topo()
@@ -78,21 +86,34 @@ def initialize(numCellRows=200, noiseCellShape=0.27, periodic=False, fixedHeight
     return [cellMap, geom, energyContributions_model]
 
 
-def create_model(fixedHeight=False):
+def create_model(fixedHeight=False, modelType=FARHADIFAR):
     """
-    Energy of the model, Farhadifar et al. 2007: E = sum K/2 (A - A0)^2 + sum Lambda l + sum Gamma/2 P^2
-    (here the area term is the cell volume, V = hA)
-    https://tyssue.readthedocs.io/en/latest/_modules/tyssue/dynamics/effectors.html
+    Energy of the model (https://tyssue.readthedocs.io/en/latest/_modules/tyssue/dynamics/effectors.html)
+
+    FARHADIFAR, Farhadifar et al. 2007 with the cell volume V = hA as area term:
+        E = sum lambdaV/2 ((V - V0)/V0)^2 + sum Lambda l + sum Gamma/2 P^2
+    EFFECTIVE_2D, apical and basal polygons coincide and the height h is fixed, so V = hA and the
+    lateral area is hP. Without line tension, the lateral surface is what recoils:
+        E = sum lambdaV/2 ((V - V0)/V0)^2 + sum lambdaS/2 ((hP - hP0)/S0)^2
+    where h is the cell height, read from the geometry like for the volume
+    with S0 = 2 A0 + h P0 the cell surface (as the 3D cell-based surface energy is normalised)
 
     :param fixedHeight: if True, only in-plane forces (see freeze_height)
+    :param modelType: FARHADIFAR or EFFECTIVE_2D
     :return:
     """
-    energyContributions_model = model_factory([
-        effectors.FaceVolumeElasticity,  # resists volume changes
-        effectors.LineTension,  # contracts the edges: what recoils after an edge ablation
-        effectors.FaceContractility,  # perimeter contractility, maintains the cell shape
-        EFFECTORS[0],  # wound contractility (purse string)
-    ])
+    if modelType == EFFECTIVE_2D:
+        cellEffectors = [
+            effectors.FaceVolumeElasticity,  # V = hA: resists area changes
+            LateralAreaElasticity,  # lateral area hP: contracts the edges, recoils
+        ]
+    else:
+        cellEffectors = [
+            effectors.FaceVolumeElasticity,  # resists volume changes
+            effectors.LineTension,  # contracts the edges: what recoils after an edge ablation
+            effectors.FaceContractility,  # perimeter contractility, maintains the cell shape
+        ]
+    energyContributions_model = model_factory(cellEffectors + [EFFECTORS[0]])  # + wound contractility
 
     if fixedHeight:
         energyContributions_model = freeze_height(energyContributions_model)
@@ -129,7 +150,8 @@ def load_state(fileName):
     cellMap = Sheet("tissue", datasets, specs)
     geom = SheetGeometry
     geom.update_all(cellMap)
-    energyContributions_model = create_model(cellMap.settings.get("fixed_height", False))
+    energyContributions_model = create_model(cellMap.settings.get("fixed_height", False),
+                                             cellMap.settings.get("model", FARHADIFAR))
 
     return [cellMap, geom, energyContributions_model]
 
@@ -393,7 +415,7 @@ def solve_with_ablation(cellMap, geom, energyContributions_model):
 
 
 def calibrate(height, targets, paramName="line_tension_norm", bounds=(1e-3, 1.0), fixedHeight=False,
-              timeAfterAblation=6.0, maxIterations=15):
+              timeAfterAblation=6.0, maxIterations=15, modelType=FARHADIFAR):
     """
     Find the value of one parameter that best reproduces the targets, searching on a log scale.
     Each evaluation initializes and relaxes the tissue, measures the edge recoil and, if needed,
@@ -403,11 +425,13 @@ def calibrate(height, targets, paramName="line_tension_norm", bounds=(1e-3, 1.0)
     :param targets: dict with any of
         'wound_area': relative wound area (%) at timeAfterAblation, 100 * A(t) / A(0)
         'edge_recoil': initial recoil velocity after an edge ablation (length per minute)
-    :param paramName: parameter to calibrate (e.g. 'line_tension_norm', 'contractility_norm' or 'lambdaV')
+    :param paramName: parameter to calibrate, e.g. 'line_tension_norm', 'contractility_norm',
+        'lambdaV' (FARHADIFAR) or 'lambdaS' (EFFECTIVE_2D)
     :param bounds: (min, max) values of the parameter
     :param fixedHeight:
     :param timeAfterAblation: minutes after ablation where the wound area is compared
     :param maxIterations:
+    :param modelType: FARHADIFAR or EFFECTIVE_2D
     :return: [best value, DataFrame with every evaluation]
     """
     evaluations = []
@@ -416,7 +440,7 @@ def calibrate(height, targets, paramName="line_tension_norm", bounds=(1e-3, 1.0)
         np.random.seed(0)  # same T1 detachments in every evaluation
         params = {paramName: 10 ** logValue}
 
-        [cellMap, geom, model] = initialize(periodic=True, fixedHeight=fixedHeight)
+        [cellMap, geom, model] = initialize(periodic=True, fixedHeight=fixedHeight, modelType=modelType)
         cellMap = inputMechanicalParameters.update(cellMap, cell_height=height, params=params)
         [cellMap, geom, model, _, _] = solve_until_relaxed(cellMap, geom, model)
 

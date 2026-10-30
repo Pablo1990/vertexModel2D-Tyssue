@@ -41,6 +41,13 @@ def update(cellmap, cell_height=15.0, params=None):
     cellmap.settings["contractility_norm"] = 0
     cellmap.settings["prefered_area"] = cellmap.face_df["area"].mean()  # A0
     cellmap.face_df["prefered_vol"] = cellmap.settings["prefered_area"] * cell_height
+
+    # Effective 2D model (apical = basal polygon, fixed height): lateral area hP, as the 3D
+    # cell-based surface energy, E = lambdaS/2 ((hP - hP0)/S0)^2 with S0 = 2 A0 + h P0 and
+    # P0 = lateral_ref * the mean perimeter (as ref_A0 in the 3D model)
+    cellmap.settings["cell_height"] = cell_height
+    cellmap.settings["lambdaS"] = 1.0
+    cellmap.settings["lateral_ref"] = 0.95
     # SheetGeometry ('flat'): height = z - basal_shift, recomputed at every update
     cellmap.vert_df["basal_shift"] = cellmap.vert_df["z"] - cell_height
 
@@ -50,8 +57,30 @@ def update(cellmap, cell_height=15.0, params=None):
     if params:
         cellmap = set_parameters(cellmap, params)
 
-    set_farhadifar_parameters(cellmap)
+    if cellmap.settings.get("model") == "effective_2d":
+        set_effective_2d_parameters(cellmap)
+    else:
+        set_farhadifar_parameters(cellmap)
 
+    return cellmap
+
+
+def set_effective_2d_parameters(cellmap):
+    """
+    Absolute values of the volume and lateral area parameters of the effective 2D model:
+    lambdaS/2 ((A_lat - A_lat0)/S0)^2 with A_lat = h P, A_lat0 = h P0 and S0 = 2 A0 + h P0
+    (LateralAreaElasticity with lateral_elasticity = lambdaS / S0^2)
+    :param cellmap:
+    :return:
+    """
+    h = cellmap.settings["cell_height"]
+    area0 = cellmap.settings["prefered_area"]
+    lateralArea0 = h * cellmap.settings["lateral_ref"] * cellmap.face_df["perimeter"].mean()
+    surface0 = 2 * area0 + lateralArea0
+
+    cellmap.face_df["vol_elasticity"] = cellmap.settings["lambdaV"] / cellmap.face_df["prefered_vol"] ** 2
+    cellmap.face_df["prefered_lateral_area"] = lateralArea0
+    cellmap.face_df["lateral_elasticity"] = cellmap.settings["lambdaS"] / surface0 ** 2
     return cellmap
 
 

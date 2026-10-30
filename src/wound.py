@@ -138,18 +138,31 @@ def edge_recoil(sheet):
     """
     Mean initial recoil velocity after an edge ablation (length per minute).
 
-    As in Farhadifar et al. 2007, an edge shared by cells f and g carries the tension
-    T = Lambda + Gamma_f P_f + Gamma_g P_g (line tension plus the perimeter contractility
-    of both cells). Ablating the edge removes T; from mechanical equilibrium its two vertices
-    then separate at 2 T / viscosity. The volume term acts on the cell areas, not on single
-    edges, so it does not contribute.
+    An edge shared by cells f and g carries the tension T = Lambda + t_f + t_g: the line tension
+    plus the tension of each cell on its perimeter: Gamma P (Farhadifar perimeter contractility),
+    K (P - P0) (perimeter elasticity) or k (h P - A_lat0) h (lateral area elasticity, effective
+    2D model). Only the
+    terms of the model are present. Ablating the edge removes T; from mechanical equilibrium its
+    two vertices then separate at 2 T / viscosity. The volume term acts on the cell areas, not
+    on single edges, so it does not contribute.
     :param sheet: relaxed tissue
     :return: mean over the edges shared by two alive cells
     """
     faces = sheet.face_df
-    contractility = faces["is_alive"] * faces["contractility"] * faces["perimeter"]
-    # Each half-edge carries half of the line tension (tyssue LineTension)
-    halfTension = 0.5 * sheet.edge_df["line_tension"] + contractility.reindex(sheet.edge_df["face"]).to_numpy()
+    cellTension = pd.Series(0.0, index=faces.index)
+    if "contractility" in faces:
+        cellTension += faces["contractility"] * faces["perimeter"]
+    if "perimeter_elasticity" in faces:
+        cellTension += faces["perimeter_elasticity"] * (faces["perimeter"] - faces["prefered_perimeter"])
+    if "lateral_elasticity" in faces:
+        lateralArea = faces["height"] * faces["perimeter"]
+        cellTension += faces["lateral_elasticity"] * (lateralArea - faces["prefered_lateral_area"]) * faces["height"]
+    cellTension *= faces["is_alive"]
+
+    halfTension = pd.Series(cellTension.reindex(sheet.edge_df["face"]).to_numpy(), index=sheet.edge_df.index)
+    if "line_tension" in sheet.edge_df:
+        halfTension += 0.5 * sheet.edge_df["line_tension"]  # each half-edge carries half (tyssue LineTension)
+
     edges = sheet.edge_df[sheet.edge_df["opposite"] >= 0]
     tension = halfTension.loc[edges.index].to_numpy() + halfTension.loc[edges["opposite"]].to_numpy()
     viscosity = sheet.vert_df["viscosity"].reindex(edges["srce"]).to_numpy()
