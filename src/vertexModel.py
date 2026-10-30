@@ -415,7 +415,7 @@ def solve_with_ablation(cellMap, geom, energyContributions_model):
 
 
 def calibrate(height, targets, paramName="line_tension_norm", bounds=(1e-3, 1.0), fixedHeight=False,
-              timeAfterAblation=6.0, maxIterations=15, modelType=FARHADIFAR):
+              timeAfterAblation=6.0, maxIterations=10, modelType=FARHADIFAR):
     """
     Find the value of one parameter that best reproduces the targets, searching on a log scale.
     Each evaluation initializes and relaxes the tissue, measures the edge recoil and, if needed,
