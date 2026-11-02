@@ -49,7 +49,7 @@ CALIBRATION = {
 CALIBRATED_PARAMETER, CALIBRATION_BOUNDS = CALIBRATION[MODEL]
 RESULTS_FOLDER = os.path.join('results', 'wound_healing', MODEL)
 TIME_AFTER_ABLATION = 6.0  # minutes, wound area compared at this time
-EDGE_RECOIL = None  # initial recoil velocity after an edge ablation (length / min); None: not used
+EDGE_RECOIL = 0.01
 
 def run_height(height, purse_strings):
     """
