@@ -15,12 +15,18 @@ from tyssue.solvers.viscous import EulerSolver
 import src.brownianMotion as brownianMotion
 import src.inputMechanicalParameters as inputMechanicalParameters
 import src.wound as wound
-from src.effectors import EFFECTORS, LateralAreaElasticity
+from src.effectors import EFFECTORS, LateralAreaElasticity, TiltedLateralAreaElasticity, anchor_basal_vertices
 from src.periodic import periodic_reconnect, periodic_voronoi_sheet
+
+
+class SimulationError(RuntimeError):
+    """The simulation blew up (overflow, NaN or infinite positions): repeat it, e.g. with a smaller dt"""
 
 
 FARHADIFAR = "farhadifar"
 EFFECTIVE_2D = "effective_2d"
+EFFECTIVE_2D_TILTED = "effective_2d_tilted"
+EFFECTIVE_2D_MODELS = (EFFECTIVE_2D, EFFECTIVE_2D_TILTED)
 
 
 def initialize(numCellRows=200, noiseCellShape=0.27, periodic=False, fixedHeight=False, modelType=FARHADIFAR):
@@ -34,11 +40,12 @@ def initialize(numCellRows=200, noiseCellShape=0.27, periodic=False, fixedHeight
     :param fixedHeight: if True, the vertices only move in the plane, so the cell height is
         fixed (V = hA with a constant h). If False, the volume term also moves the vertices in z,
         so the cells change their height
-    :param modelType: FARHADIFAR or EFFECTIVE_2D (see create_model). EFFECTIVE_2D always
+    :param modelType: FARHADIFAR, EFFECTIVE_2D or EFFECTIVE_2D_TILTED (see create_model). The
+        effective 2D models always
         has a fixed height
     :return:
     """
-    fixedHeight = fixedHeight or modelType == EFFECTIVE_2D
+    fixedHeight = fixedHeight or modelType in EFFECTIVE_2D_MODELS
     energyContributions_model = create_model(fixedHeight, modelType)
 
     if not periodic:
@@ -77,9 +84,6 @@ def initialize(numCellRows=200, noiseCellShape=0.27, periodic=False, fixedHeight
     # Update geometry with the patch
     geom.update_all(cellMap)
 
-    # Visualize the sheet
-    fig, ax = sheet_view(cellMap, mode="quick")
-
     ## Connect cells with energy contributions
     cellMap.update_specs(energyContributions_model.specs)
 
@@ -97,15 +101,23 @@ def create_model(fixedHeight=False, modelType=FARHADIFAR):
         E = sum lambdaV/2 ((V - V0)/V0)^2 + sum lambdaS/2 ((hP - hP0)/S0)^2
     where h is the cell height, read from the geometry like for the volume
     with S0 = 2 A0 + h P0 the cell surface (as the 3D cell-based surface energy is normalised)
+    EFFECTIVE_2D_TILTED, as EFFECTIVE_2D, but from the ablation the basal vertices stay where they
+    were and only the apical ones move: the lateral faces tilt and their area grows with the
+    apical-basal offset, which resists the recoil
 
     :param fixedHeight: if True, only in-plane forces (see freeze_height)
-    :param modelType: FARHADIFAR or EFFECTIVE_2D
+    :param modelType: FARHADIFAR, EFFECTIVE_2D or EFFECTIVE_2D_TILTED
     :return:
     """
     if modelType == EFFECTIVE_2D:
         cellEffectors = [
             effectors.FaceVolumeElasticity,  # V = hA: resists area changes
             LateralAreaElasticity,  # lateral area hP: contracts the edges, recoils
+        ]
+    elif modelType == EFFECTIVE_2D_TILTED:
+        cellEffectors = [
+            effectors.FaceVolumeElasticity,  # V = hA: resists area changes
+            TiltedLateralAreaElasticity,  # lateral faces between apical and anchored basal vertices
         ]
     else:
         cellEffectors = [
@@ -284,7 +296,25 @@ def run_until(solver, endTime, dt):
     :return:
     """
     solver.prev_t += dt
-    solver.solve(tf=endTime, dt=dt)
+    try:
+        # Overflows and invalid values (NaN) mean the simulation blew up: stop instead of warning
+        with np.errstate(over="raise", invalid="raise"):
+            solver.solve(tf=endTime, dt=dt)
+    except FloatingPointError as error:
+        raise SimulationError(f"Numerical error at t = {solver.prev_t:g} min: {error}") from error
+    check_finite(solver.eptm, solver.prev_t)
+
+
+def check_finite(cellMap, t):
+    """
+    Raise a SimulationError if any vertex position is not finite
+
+    :param cellMap:
+    :param t: current time, for the message
+    :return:
+    """
+    if not np.isfinite(cellMap.vert_df[cellMap.coords].to_numpy()).all():
+        raise SimulationError(f"Non-finite vertex positions at t = {t:g} min")
 
 
 def mean_vertex_speed(cellMap, previousPositions, elapsedTime):
@@ -392,6 +422,8 @@ def solve_with_ablation(cellMap, geom, energyContributions_model):
     ## Ablation: the central cells become a single debris cell
     ablatedCells = wound.central_faces(cellMap, cellMap.settings["n_ablated"])
     wound.ablate(cellMap, ablatedCells, geom)
+    if cellMap.settings.get("model") == EFFECTIVE_2D_TILTED:
+        anchor_basal_vertices(cellMap)  # from now on, only the apical vertices recoil
     wound.update_wound_tension(cellMap, tAblation)
     woundTimecourse = [wound.wound_record(cellMap, tAblation)]
 
@@ -415,7 +447,7 @@ def solve_with_ablation(cellMap, geom, energyContributions_model):
 
 
 def calibrate(height, targets, paramName="line_tension_norm", bounds=(1e-3, 1.0), fixedHeight=False,
-              timeAfterAblation=6.0, maxIterations=10, modelType=FARHADIFAR):
+              timeAfterAblation=6.0, maxIterations=20, modelType=FARHADIFAR, maxTimeStepHalvings=3):
     """
     Find the value of one parameter that best reproduces the targets, searching on a log scale.
     Each evaluation initializes and relaxes the tissue, measures the edge recoil and, if needed,
@@ -426,20 +458,22 @@ def calibrate(height, targets, paramName="line_tension_norm", bounds=(1e-3, 1.0)
         'wound_area': relative wound area (%) at timeAfterAblation, 100 * A(t) / A(0)
         'edge_recoil': initial recoil velocity after an edge ablation (length per minute)
     :param paramName: parameter to calibrate, e.g. 'line_tension_norm', 'contractility_norm',
-        'lambdaV' (FARHADIFAR) or 'lambdaS' (EFFECTIVE_2D)
+        'lambdaV' (FARHADIFAR) or 'lambdaS' (effective 2D models)
     :param bounds: (min, max) values of the parameter
     :param fixedHeight:
     :param timeAfterAblation: minutes after ablation where the wound area is compared
     :param maxIterations:
-    :param modelType: FARHADIFAR or EFFECTIVE_2D
-    :return: [best value, DataFrame with every evaluation]
+    :param modelType: FARHADIFAR, EFFECTIVE_2D or EFFECTIVE_2D_TILTED
+    :param maxTimeStepHalvings: when a simulation blows up, it is repeated with half the time step,
+        up to this number of times
+    :return: [best value, DataFrame with every evaluation (with the dt used)]. Values whose
+        simulation still blew up are marked as failed; raises SimulationError if all of them did
     """
+    failedError = 1e6  # error of a simulation that blew up, so the search moves away from that value
     evaluations = []
 
-    def error(logValue):
+    def simulate_features(params):
         np.random.seed(0)  # same T1 detachments in every evaluation
-        params = {paramName: 10 ** logValue}
-
         [cellMap, geom, model] = initialize(periodic=True, fixedHeight=fixedHeight, modelType=modelType)
         cellMap = inputMechanicalParameters.update(cellMap, cell_height=height, params=params)
         [cellMap, geom, model, _, _] = solve_until_relaxed(cellMap, geom, model)
@@ -449,14 +483,33 @@ def calibrate(height, targets, paramName="line_tension_norm", bounds=(1e-3, 1.0)
             cellMap.settings["tend"] = cellMap.settings["TInitAblation"] + timeAfterAblation
             [_, _, _, _, woundTimecourse] = solve_with_ablation(cellMap, geom, model)
             features["wound_area"] = wound.relative_wound_area(woundTimecourse, timeAfterAblation)
+        return features, cellMap.settings["dt"]
+
+    def error(logValue):
+        params = {paramName: 10 ** logValue}
+
+        # Stiff parameters make the explicit Euler unstable: retry with half the time step
+        for attempt in range(maxTimeStepHalvings + 1):
+            try:
+                features, dt = simulate_features(params)
+                break
+            except SimulationError as simulationError:
+                print(f"Calibration: {paramName} = {params[paramName]:.3g} blew up "
+                      f"(dt = {params.get('dt', 'default')}): {simulationError}")
+                params["dt"] = params.get("dt", inputMechanicalParameters.DEFAULT_DT) / 2
+        else:
+            evaluations.append({paramName: params[paramName], "error": failedError, "failed": True})
+            return failedError
 
         err = wound.calibration_error(features, targets)
-        evaluations.append({paramName: params[paramName], **features, "error": err})
-        print(f"Calibration: {paramName} = {params[paramName]:.3g}, {features}, error = {err:.3g}")
+        evaluations.append({paramName: params[paramName], "dt": dt, **features, "error": err, "failed": False})
+        print(f"Calibration: {paramName} = {params[paramName]:.3g}, dt = {dt:g}, {features}, error = {err:.3g}")
         return err
 
     result = minimize_scalar(error, bounds=np.log10(bounds), method="bounded",
                              options={"maxiter": maxIterations, "xatol": 0.01})
+    if result.fun >= failedError:
+        raise SimulationError(f"Calibration of {paramName} failed: every evaluated value blew up")
 
     return [10 ** result.x, pd.DataFrame(evaluations)]
 
@@ -482,6 +535,7 @@ def wound_area_rate(cellMap, geom, energyContributions_model, woundTension, dtPr
     velocity = -gradient[["g" + c for c in probe.coords]].to_numpy() / probe.vert_df[["viscosity"]].to_numpy()
     probe.vert_df[probe.coords] += dtProbe * velocity
     geom.update_all(probe)
+    check_finite(probe, cellMap.settings["TInitAblation"])
 
     return (wound.wound_measures(probe)["wound_area"] - initialArea) / dtProbe
 
