@@ -345,7 +345,8 @@ def solve_until_relaxed(cellMap, geom, energyContributions_model, tol=1e-3, maxT
     :param cellMap:
     :param geom:
     :param energyContributions_model:
-    :param tol: relaxed when the mean vertex speed (distance per minute) is below tol
+    :param tol: relaxed when the mean vertex speed (distance per minute) is below
+        tol * settings['length_scale'] (the cell size, see inputMechanicalParameters.resize_tissue)
     :param maxTime: maximum simulated time (minutes)
     :return: [cellMap, geom, energyContributions_model, history, relaxTimecourse]
         relaxTimecourse: DataFrame with the mean vertex speed, cell height, area and aspect
@@ -353,6 +354,7 @@ def solve_until_relaxed(cellMap, geom, energyContributions_model, tol=1e-3, maxT
     """
     dt = cellMap.settings["dt"]
     checkEvery = cellMap.settings["record_every"]
+    tol *= cellMap.settings.get("length_scale", 1.0)
 
     ## Init history object, recording every checkEvery minutes
     history_cellMap = History(cellMap, save_every=round(checkEvery / dt), dt=1)

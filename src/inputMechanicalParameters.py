@@ -1,22 +1,31 @@
 import numpy as np
+from tyssue import SheetGeometry
 
 import src.auxFunctions as auxFunctions
 
 DEFAULT_DT = 0.01  # minutes
+# Mean cell volume of every pyVertexModel tissue (Geo.resize_tissue default): whatever the height,
+# the 3D tissue is scaled isotropically to this volume
+REFERENCE_CELL_VOLUME = 1 #0.0003168604676977124
 
 def update(cellmap, cell_height=15.0, params=None):
     """
-    Set the default mechanical parameters
-    :param cellmap:
-    :param cell_height:
+    Resize the tissue to the pyVertexModel reference volume (resize_tissue) and set the default
+    mechanical parameters
+    :param cellmap: tissue from vertexModel.initialize (not resized yet)
+    :param cell_height: cell height before resizing, i.e. the aspect ratio (height / sqrt(area)) of
+        the cells times the square root of the initial mean area (~1). The actual height is
+        cell_height * settings['length_scale']
     :param params: optional dict {name: value} overwriting the defaults (see set_parameters)
     :return:
     """
+    cell_height = resize_tissue(cellmap, cell_height)
+
     # Stochastically detaches vertices from rosettes.
     # Uses two probabilities `p_4` and `p_5p`
     cellmap.settings["p_4"] = 10
     cellmap.settings["p_5p"] = 0.1
-    cellmap.settings["threshold_length"] = 2e-2
+    cellmap.settings["threshold_length"] = 2e-2 * cellmap.settings["length_scale"]  # as the cell size
 
     # Additional settings
     cellmap.settings["n_ablated"] = 10 # cells ablated around the tissue centre
@@ -49,7 +58,7 @@ def update(cellmap, cell_height=15.0, params=None):
     # P0 = lateral_ref * the mean perimeter (as ref_A0 in the 3D model)
     cellmap.settings["cell_height"] = cell_height
     cellmap.settings["lambdaS"] = 1.0
-    cellmap.settings["lateral_ref"] = 0.8
+    cellmap.settings["lateral_ref"] = 0.95
     # SheetGeometry ('flat'): height = z - basal_shift, recomputed at every update
     cellmap.vert_df["basal_shift"] = cellmap.vert_df["z"] - cell_height
 
@@ -65,6 +74,38 @@ def update(cellmap, cell_height=15.0, params=None):
         set_farhadifar_parameters(cellmap)
 
     return cellmap
+
+
+def resize_tissue(cellmap, cell_height, average_volume=REFERENCE_CELL_VOLUME):
+    """
+    Scale the tissue isotropically (x, y and the cell height) so that the mean volume of the alive
+    cells, height * area, is average_volume, as pyVertexModel Geo.resize_tissue. The aspect ratio
+    (height / sqrt(area)) is kept, and so is the shape of every cell. The periodic boundaries are
+    scaled with the tissue, around the origin
+    :param cellmap: tissue with z = 0, not resized yet
+    :param cell_height: height before resizing
+    :param average_volume: target mean cell volume
+    :return: the cell height after resizing
+    """
+    if "length_scale" in cellmap.settings:
+        raise ValueError("The tissue has already been resized (settings['length_scale'])")
+
+    SheetGeometry.update_all(cellmap)
+    meanArea = cellmap.face_df.loc[cellmap.face_df["is_alive"] == 1, "area"].mean()
+    scale = (average_volume / (cell_height * meanArea)) ** (1 / 3)
+
+    planarCoords = [coord for coord in cellmap.coords if coord != "z"]
+    cellmap.vert_df[planarCoords] *= scale
+    boundaries = cellmap.settings.get("boundaries")
+    if boundaries:
+        cellmap.settings["boundaries"] = {coord: [float(low * scale), float(high * scale)] for coord, (low, high) in boundaries.items()}
+    cellmap.settings["length_scale"] = float(scale)
+    cellmap.settings["aspect_ratio"] = float(cell_height / np.sqrt(meanArea))
+
+    height = cell_height * scale
+    cellmap.vert_df["basal_shift"] = cellmap.vert_df["z"] - height
+    SheetGeometry.update_all(cellmap)
+    return height
 
 
 def set_effective_2d_parameters(cellmap):
