@@ -15,7 +15,8 @@ from tyssue.solvers.viscous import EulerSolver
 import src.brownianMotion as brownianMotion
 import src.inputMechanicalParameters as inputMechanicalParameters
 import src.wound as wound
-from src.effectors import EFFECTORS, LateralAreaElasticity, TiltedLateralAreaElasticity, anchor_basal_vertices
+from src.effectors import (EFFECTORS, LateralAreaElasticity, TiltedLateralAreaElasticity, anchor_basal_vertices,
+                           without_ablated_edges)
 from src.periodic import periodic_reconnect, periodic_voronoi_sheet
 
 
@@ -112,19 +113,20 @@ def create_model(fixedHeight=False, modelType=FARHADIFAR):
     if modelType == EFFECTIVE_2D:
         cellEffectors = [
             effectors.FaceVolumeElasticity,  # V = hA: resists area changes
-            LateralAreaElasticity,  # lateral area hP: contracts the edges, recoils
+            without_ablated_edges(LateralAreaElasticity),  # lateral area hP: contracts the edges, recoils
         ]
     elif modelType == EFFECTIVE_2D_TILTED:
         cellEffectors = [
             effectors.FaceVolumeElasticity,  # V = hA: resists area changes
-            TiltedLateralAreaElasticity,  # lateral faces between apical and anchored basal vertices
+            without_ablated_edges(TiltedLateralAreaElasticity),  # lateral faces between apical and anchored basal vertices
         ]
     else:
         cellEffectors = [
             effectors.FaceVolumeElasticity,  # resists volume changes
-            effectors.LineTension,  # contracts the edges: what recoils after an edge ablation
-            effectors.FaceContractility,  # perimeter contractility, maintains the cell shape
+            without_ablated_edges(effectors.LineTension),  # contracts the edges: what recoils after an edge ablation
+            without_ablated_edges(effectors.FaceContractility),  # perimeter contractility, maintains the cell shape
         ]
+    # The edge-tension effectors skip the ablated edges (edge_recoil)
     energyContributions_model = model_factory(cellEffectors + [EFFECTORS[0]])  # + wound contractility
 
     if fixedHeight:
@@ -446,17 +448,92 @@ def solve_with_ablation(cellMap, geom, energyContributions_model):
     return [cellMap_new, geom, energyContributions_model, history_new, pd.DataFrame(woundTimecourse)]
 
 
+def edge_length_event(sheet, manager, faces, recoilTimecourse):
+    """
+    EventManager behaviour run after every Euler step of an edge ablation: records the length of
+    the ablated edge and the time after the ablation in seconds (compute_edge_length_v_model)
+
+    :param sheet:
+    :param manager:
+    :param faces: (cell, neighbour) sharing the ablated edge
+    :param recoilTimecourse: list where the records are appended
+    :return:
+    """
+    numStep = manager.clock + 1  # manager.clock counts the steps already finished
+    recoilTimecourse.append({"time_steps": 60 * numStep * sheet.settings["dt"],  # 1 t = 1 min
+                             "edge_length": wound.shared_edge_length(sheet, *faces)})
+    manager.append(edge_length_event, faces=faces, recoilTimecourse=recoilTimecourse)
+
+
+def edge_recoil(cellMap, geom, energyContributions_model, n_ablations=2, t_end=0.5):
+    """
+    Apical edge recoil, as pyVertexModel analyse_edge_recoil (type_of_ablation
+    'recoil_edge_info_apical'): n_ablations times, starting from the relaxed tissue, ablate the
+    edge between the central cell and one of its neighbours (wound.ablate_edge), simulate t_end
+    minutes without remodelling nor purse string, and fit the Kelvin-Voigt recoil to the edge
+    length (wound.fit_ablation_equation). In the tilted model the basal vertices are anchored at
+    the ablation, as the basal side is not ablated
+
+    :param cellMap: relaxed tissue (not modified)
+    :param geom:
+    :param energyContributions_model:
+    :param n_ablations:
+    :param t_end: minutes simulated after each ablation
+    :return: DataFrame with one row per ablation: cell_to_ablate, neighbour_to_ablate,
+        edge_length_init, edge_length_final and time_steps (s) time courses,
+        edge_length_final_normalized ((L - L_init) / L_init), initial_recoil_in_s and K (1/s)
+    """
+    dt = cellMap.settings["dt"]
+    ablations = []
+    for cell, neighbour in wound.edges_to_ablate(cellMap, n_ablations):
+        ablatedMap = copy.deepcopy(cellMap)
+        ablatedMap.settings["remodelling"] = False
+        ablatedMap.settings["wound_tension"] = 0.0
+        edgeLengthInit = wound.shared_edge_length(ablatedMap, cell, neighbour)
+        wound.ablate_edge(ablatedMap, cell, neighbour)
+        if ablatedMap.settings.get("model") == EFFECTIVE_2D_TILTED:
+            anchor_basal_vertices(ablatedMap)
+
+        recoilTimecourse = []
+        manager = EventManager("face")
+        manager.append_current(edge_length_event, faces=(cell, neighbour), recoilTimecourse=recoilTimecourse)
+        history = History(ablatedMap, save_every=max(1, round(t_end / dt)), dt=1)  # only the last state
+        solver = create_solver(ablatedMap, geom, energyContributions_model, history, manager)
+        run_until(solver, t_end, dt)
+
+        recoilTimecourse = pd.DataFrame(recoilTimecourse)
+        edgeLength = recoilTimecourse["edge_length"].to_numpy()
+        try:
+            K, initialRecoil, _ = wound.fit_ablation_equation(edgeLength, recoilTimecourse["time_steps"])
+        except RuntimeError as error:  # curve_fit did not converge
+            raise SimulationError(f"Edge recoil fit failed ({cell}, {neighbour}): {error}") from error
+
+        ablations.append({
+            "cell_to_ablate": cell,
+            "neighbour_to_ablate": neighbour,
+            "edge_length_init": edgeLengthInit,
+            "edge_length_final": edgeLength,
+            "edge_length_final_normalized": (edgeLength - edgeLengthInit) / edgeLengthInit,
+            "time_steps": recoilTimecourse["time_steps"].to_numpy(),
+            "initial_recoil_in_s": initialRecoil,
+            "K": K,
+        })
+
+    return pd.DataFrame(ablations)
+
+
 def calibrate(height, targets, paramName="line_tension_norm", bounds=(1e-3, 1.0), fixedHeight=False,
               timeAfterAblation=6.0, maxIterations=20, modelType=FARHADIFAR, maxTimeStepHalvings=3):
     """
     Find the value of one parameter that best reproduces the targets, searching on a log scale.
-    Each evaluation initializes and relaxes the tissue, measures the edge recoil and, if needed,
+    Each evaluation initializes and relaxes the tissue, measures the apical edge recoil and, if needed,
     ablates the wound and simulates until timeAfterAblation
 
     :param height: cell height used for the calibration (e.g. the wing disc one)
     :param targets: dict with any of
         'wound_area': relative wound area (%) at timeAfterAblation, 100 * A(t) / A(0)
-        'edge_recoil': initial recoil velocity after an edge ablation (length per minute)
+        'edge_recoil': initial recoil after an apical edge ablation, (1/s), see edge_recoil
+        'edge_recoil_K': Kelvin-Voigt relaxation rate of that recoil (1/s)
     :param paramName: parameter to calibrate, e.g. 'line_tension_norm', 'contractility_norm',
         'lambdaV' (FARHADIFAR) or 'lambdaS' (effective 2D models)
     :param bounds: (min, max) values of the parameter
@@ -478,7 +555,8 @@ def calibrate(height, targets, paramName="line_tension_norm", bounds=(1e-3, 1.0)
         cellMap = inputMechanicalParameters.update(cellMap, cell_height=height, params=params)
         [cellMap, geom, model, _, _] = solve_until_relaxed(cellMap, geom, model)
 
-        features = {"edge_recoil": wound.edge_recoil(cellMap)}
+        recoil = edge_recoil(cellMap, geom, model)
+        features = {"edge_recoil": recoil["initial_recoil_in_s"].mean(), "edge_recoil_K": recoil["K"].mean()}
         if "wound_area" in targets:
             cellMap.settings["tend"] = cellMap.settings["TInitAblation"] + timeAfterAblation
             [_, _, _, _, woundTimecourse] = solve_with_ablation(cellMap, geom, model)

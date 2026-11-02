@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from scipy.optimize import curve_fit
 from tyssue import PlanarGeometry
 
 from src.inputMechanicalParameters import wound_contractility
@@ -134,39 +135,93 @@ def load_wound_area_target(csvFile, timeAfterAblation):
     return relative_wound_area(pd.read_csv(csvFile), timeAfterAblation)
 
 
-def edge_recoil(sheet):
+def opposite_faces(sheet):
+    """Face on the other side of each half-edge (-1 for border half-edges)"""
+    e = sheet.edge_df
+    opp = e["opposite"].to_numpy()
+    return np.where(opp >= 0, e["face"].reindex(opp).to_numpy(), -1)
+
+
+def shared_half_edges(sheet, faceA, faceB):
     """
-    Mean initial recoil velocity after an edge ablation (length per minute).
-
-    An edge shared by cells f and g carries the tension T = Lambda + t_f + t_g: the line tension
-    plus the tension of each cell on its perimeter: Gamma P (Farhadifar perimeter contractility),
-    K (P - P0) (perimeter elasticity) or k (h P - A_lat0) h (lateral area elasticity, effective
-    2D model). Only the
-    terms of the model are present. Ablating the edge removes T; from mechanical equilibrium its
-    two vertices then separate at 2 T / viscosity. The volume term acts on the cell areas, not
-    on single edges, so it does not contribute.
-    :param sheet: relaxed tissue
-    :return: mean over the edges shared by two alive cells
+    The edge shared by faceA and faceB (Geo.get_edges_vertices). tyssue stores each edge as two
+    half-edges, one per cell (same vertices, opposite directions): both are returned
     """
-    faces = sheet.face_df
-    cellTension = pd.Series(0.0, index=faces.index)
-    if "contractility" in faces:
-        cellTension += faces["contractility"] * faces["perimeter"]
-    if "perimeter_elasticity" in faces:
-        cellTension += faces["perimeter_elasticity"] * (faces["perimeter"] - faces["prefered_perimeter"])
-    if "lateral_elasticity" in faces:
-        lateralArea = faces["height"] * faces["perimeter"]
-        cellTension += faces["lateral_elasticity"] * (lateralArea - faces["prefered_lateral_area"]) * faces["height"]
-    cellTension *= faces["is_alive"]
+    e = sheet.edge_df
+    faces = e["face"].to_numpy()
+    opp_face = opposite_faces(sheet)
+    shared = ((faces == faceA) & (opp_face == faceB)) | ((faces == faceB) & (opp_face == faceA))
+    return e.index[shared]
 
-    halfTension = pd.Series(cellTension.reindex(sheet.edge_df["face"]).to_numpy(), index=sheet.edge_df.index)
-    if "line_tension" in sheet.edge_df:
-        halfTension += 0.5 * sheet.edge_df["line_tension"]  # each half-edge carries half (tyssue LineTension)
 
-    edges = sheet.edge_df[sheet.edge_df["opposite"] >= 0]
-    tension = halfTension.loc[edges.index].to_numpy() + halfTension.loc[edges["opposite"]].to_numpy()
-    viscosity = sheet.vert_df["viscosity"].reindex(edges["srce"]).to_numpy()
-    return float(np.mean(2 * tension / viscosity))
+def shared_edge_length(sheet, faceA, faceB):
+    """
+    Length of the edge(s) shared by faceA and faceB (Geo.get_edge_length): each edge is counted
+    once, from the half-edges of faceA
+    :return: 0 if they are not neighbours
+    """
+    e = sheet.edge_df
+    shared = shared_half_edges(sheet, faceA, faceB)
+    return float(e.loc[shared[e.loc[shared, "face"].to_numpy() == faceA], "length"].sum())
+
+
+def ablate_edge(sheet, faceA, faceB):
+    """
+    Edge ablation (Geo.ablate_edge with adjacent_surface=False): the edge shared by faceA and
+    faceB (both of its half-edges, one per cell) loses its own tension: the whole line tension
+    and the pull of the perimeter or lateral surface of both cells along it, see
+    effectors.without_ablated_edges. The cell areas/volumes still act on its vertices
+    :return: the two half-edges of the ablated edge
+    """
+    if "is_ablated" not in sheet.edge_df:
+        sheet.edge_df["is_ablated"] = 0
+    ablated = shared_half_edges(sheet, faceA, faceB)
+    if ablated.empty:
+        raise ValueError(f"Faces {faceA} and {faceB} do not share an edge")
+    sheet.edge_df.loc[ablated, "is_ablated"] = 1
+    return ablated
+
+
+def recoil_model(x, initial_recoil, K):
+    """
+    Kelvin-Voigt recoil of an ablated edge (pyVertexModel analyse_simulation.recoil_model):
+        (L(t) - L0) / L0 = initial_recoil / K (1 - exp(-K t))
+    :param x: time after the ablation (s)
+    :param initial_recoil: initial strain rate (1/s)
+    :param K: relaxation rate, elasticity / viscosity (1/s)
+    """
+    return (initial_recoil / K) * (1 - np.exp(-K * x))
+
+
+def fit_ablation_equation(edge_length, time_steps):
+    """
+    Fit the Kelvin-Voigt recoil to an edge length time course, as pyVertexModel
+    analyse_simulation.fit_ablation_equation (Veronika Lachina): the lengths are normalised by
+    the FIRST RECORDED length (one time step after the ablation), not by the pre-ablation one
+    :param edge_length: edge length at each time step after the ablation
+    :param time_steps: time after the ablation (s)
+    :return: K (1/s), initial_recoil (1/s), error bars of (initial_recoil, K)
+    """
+    edge_length = np.asarray(edge_length, dtype=float)
+    strain = (edge_length - edge_length[0]) / edge_length[0]
+    params, covariance = curve_fit(recoil_model, np.asarray(time_steps, dtype=float), strain,
+                                   p0=[0.00001, 3], bounds=(0, np.inf))
+    initial_recoil, K = params
+    return K, initial_recoil, np.sqrt(np.diag(covariance))
+
+
+def edges_to_ablate(sheet, n_ablations, seed=0):
+    """
+    Edges ablated to measure the recoil (pyVertexModel analyse_edge_recoil): the central cell
+    with each of its neighbours, in a random order (seed), cycling if there are fewer neighbours
+    than ablations
+    :return: list of (cell, neighbour)
+    """
+    cell = central_faces(sheet, 1)[0]
+    opp_face = opposite_faces(sheet)
+    neighbours = np.unique(opp_face[(sheet.edge_df["face"].to_numpy() == cell) & (opp_face >= 0)])
+    np.random.default_rng(seed).shuffle(neighbours)
+    return [(int(cell), int(neighbours[i % len(neighbours)])) for i in range(n_ablations)]
 
 
 def calibration_error(features, targets, weights=None):

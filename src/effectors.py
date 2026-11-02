@@ -4,6 +4,7 @@ Custom tyssue effectors.
     LateralAreaElasticity: elasticity of the lateral area h P of each cell (effective 2D model)
     TiltedLateralAreaElasticity: same, with basal vertices anchored, so lateral faces tilt
     WoundContractility: purse string on the wound edges (settings['wound_tension'])
+    without_ablated_edges: removes the forces of an edge-tension effector on ablated edges
 """
 import numpy as np
 import pandas as pd
@@ -51,6 +52,28 @@ class LateralAreaElasticity(AbstractEffector):
         grad_trgt = -grad_srce.copy()
         grad_srce[height_axis] += grad_height
         return grad_srce, grad_trgt
+
+
+def without_ablated_edges(effector):
+    """
+    Same effector, without its forces on the ablated edges (edge_df 'is_ablated' = 1 on both
+    half-edges of the edge, one per cell sharing it), as
+    the edge ablation in pyVertexModel (Geo.y_ablated), which skips the contractility and surface
+    tension of the triangles on the ablated edge. Only for effectors whose gradient rows are
+    tensions along each half-edge (line tension, perimeter or lateral surface): the area/volume
+    terms must keep acting. The energy is not changed (as in pyVertexModel); only the gradient
+    drives the EulerSolver
+    :param effector: effector class
+    :return: effector class
+    """
+    def gradient(eptm):
+        grad_srce, grad_trgt = effector.gradient(eptm)
+        if "is_ablated" not in eptm.edge_df or not eptm.edge_df["is_ablated"].any():
+            return grad_srce, grad_trgt
+        intact = 1 - eptm.edge_df["is_ablated"].to_numpy()[:, None]  # rows follow edge_df
+        return grad_srce * intact, grad_trgt * intact
+
+    return type(effector.__name__, (effector,), {"gradient": staticmethod(gradient)})
 
 
 def basal_offsets(eptm):
