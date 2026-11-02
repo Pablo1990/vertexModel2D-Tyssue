@@ -20,8 +20,10 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 HEIGHTS = [0.15, 1.5, 7.5, 15.0, 30.0]
 # vertexModel.FARHADIFAR: volume + line tension + perimeter contractility
 # vertexModel.EFFECTIVE_2D: apical = basal polygon with fixed height, V = hA, lateral area hP recoils
-MODEL = vertexModel.EFFECTIVE_2D
-FIXED_HEIGHT = True  # True: vertices only move in the plane (V = hA with a constant h). Always True for EFFECTIVE_2D
+# vertexModel.EFFECTIVE_2D_TILTED: as EFFECTIVE_2D, but at the ablation the basal vertices are anchored:
+#   only the apical ones recoil, and the tilted lateral faces grow and resist it
+MODEL = vertexModel.EFFECTIVE_2D_TILTED
+FIXED_HEIGHT = True  # True: vertices only move in the plane (V = hA with a constant h). Always True for the effective 2D models
 PERIODIC = True
 NUM_CELLS = 200
 SEED = 0  # random T1 detachments: same seed, same simulation
@@ -39,15 +41,21 @@ WOUND_AREA_FILE = os.path.join(INPUT_FOLDER, 'wound_area.csv')  # columns: time_
 # Parameter calibrated for each model and its search range
 CALIBRATION = {
     vertexModel.FARHADIFAR: ('line_tension_norm', (1e-3, 1.0)),  # or 'contractility_norm', 'lambdaV'
-    vertexModel.EFFECTIVE_2D: ('lambdaS', (1e-2, 1e3)),  # lateral surface, or 'lambdaV'
+    # Effective 2D models: lambdaS sets how fast the wound recoils (stiffness), lateral_ref how much
+    # (the lateral area relaxes to lateral_ref * the initial one: the maximum wound opening)
+    vertexModel.EFFECTIVE_2D: ('lambdaS', (1e-2, 1e4)),  # or 'lambdaS', 'lambdaV'
+    vertexModel.EFFECTIVE_2D_TILTED: ('lambdaS', (1e-2, 1e3)),
 }
 CALIBRATED_PARAMETER, CALIBRATION_BOUNDS = CALIBRATION[MODEL]
 RESULTS_FOLDER = os.path.join('results', 'wound_healing', MODEL)
 TIME_AFTER_ABLATION = 6.0  # minutes, wound area compared at this time
 EDGE_RECOIL = None  # initial recoil velocity after an edge ablation (length / min); None: not used
 
-purse_strings = []
-for height in HEIGHTS:
+def run_height(height, purse_strings):
+    """
+    Calibrate (if not done yet), relax, compute the required purse string and simulate the
+    wound healing for one height. Raises vertexModel.SimulationError if the simulation blew up
+    """
     print(f"---- Height {height} ----")
     output_folder = os.path.join(RESULTS_FOLDER, str(height))
     output_folder_relaxed = os.path.join(output_folder, 'relaxing')
@@ -74,7 +82,9 @@ for height in HEIGHTS:
                                                           fixedHeight=FIXED_HEIGHT,
                                                           timeAfterAblation=TIME_AFTER_ABLATION,
                                                           modelType=MODEL)
-        params = {CALIBRATED_PARAMETER: float(best_value)}
+        # Calibrated value, with the time step its simulation needed to be stable
+        best_evaluation = calibration.loc[calibration['error'].idxmin()]
+        params = {CALIBRATED_PARAMETER: float(best_value), 'dt': float(best_evaluation['dt'])}
         os.makedirs(os.path.dirname(CALIBRATED_PARAMETERS_FILE), exist_ok=True)
         calibration.to_csv(os.path.join(output_folder, 'calibration.csv'), index=False)
         with open(CALIBRATED_PARAMETERS_FILE, 'w') as f:
@@ -127,3 +137,24 @@ for height in HEIGHTS:
     #auxFunctions.create_frames(history_H, './results', edge={'color':'black'}, face={'visible': True , 'color':color, 'colormap': 'Greys'})
     auxFunctions.create_frames(history_H, output_folder_ablation, edge={'color': 'black'})
     # auxFunctions.exportToMesh(history_H, './results')
+
+
+purse_strings = []
+failed_simulations = []
+for height in HEIGHTS:
+    error_file = os.path.join(RESULTS_FOLDER, str(height), 'error.txt')
+    if os.path.exists(error_file):
+        os.remove(error_file)  # repeated now
+    try:
+        run_height(height, purse_strings)
+    except vertexModel.SimulationError as error:
+        # Marked as failed (error.txt and failed_simulations.csv): run again to repeat it
+        print(f"---- Height {height} FAILED, repeat it: {error} ----")
+        failed_simulations.append({'height': height, 'error': str(error)})
+        os.makedirs(os.path.dirname(error_file), exist_ok=True)
+        with open(error_file, 'w') as f:
+            f.write(str(error) + '\n')
+
+os.makedirs(RESULTS_FOLDER, exist_ok=True)
+pd.DataFrame(failed_simulations, columns=['height', 'error']).to_csv(
+    os.path.join(RESULTS_FOLDER, 'failed_simulations.csv'), index=False)

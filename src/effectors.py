@@ -2,6 +2,7 @@
 Custom tyssue effectors.
 
     LateralAreaElasticity: elasticity of the lateral area h P of each cell (effective 2D model)
+    TiltedLateralAreaElasticity: same, with basal vertices anchored, so lateral faces tilt
     WoundContractility: purse string on the wound edges (settings['wound_tension'])
 """
 import numpy as np
@@ -50,6 +51,124 @@ class LateralAreaElasticity(AbstractEffector):
         grad_trgt = -grad_srce.copy()
         grad_srce[height_axis] += grad_height
         return grad_srce, grad_trgt
+
+
+def basal_offsets(eptm):
+    """
+    Horizontal offset of each apical vertex from its basal vertex, apical - basal (minimum image
+    on periodic sheets). Zero until the basal vertices are anchored (settings['basal_anchored'])
+    """
+    offsets = np.zeros((eptm.Nv, 2))
+    if eptm.settings.get("basal_anchored", False):
+        for i, coord in enumerate(("x", "y")):
+            offsets[:, i] = eptm.vert_df[coord] - eptm.vert_df["basal_" + coord]
+            boundary = (eptm.settings.get("boundaries") or {}).get(coord)
+            if boundary is not None:
+                period = boundary[1] - boundary[0]
+                offsets[:, i] -= period * np.round(offsets[:, i] / period)
+    return offsets
+
+
+def tilted_lateral_faces(eptm):
+    """
+    Lateral face of each half-edge: the quadrilateral between the apical edge (s -> t, at the
+    cell height h) and the basal edge (anchored vertices, at height 0). Its area is half the
+    norm of the cross product of its diagonals:
+        D1 = basal_t - apical_s = (e - d_t, -h),   D2 = apical_t - basal_s = (e + d_s, h)
+    with e the apical edge vector and d the apical - basal offsets.
+
+    The lateral area of the effective cell is h |e| (its polygon stands for both apical and basal
+    surfaces) plus the extra area due to the tilt, Q - h (|e| + |e_basal|) / 2 (tilted face minus
+    the same face upright). That is Q + h (|e| - |e_basal|) / 2, which equals h |e| without tilt,
+    with the same forces, so anchoring the basal vertices does not move a relaxed tissue
+    :return: D1, D2 (Ne x 3), cross product D1 x D2 (Ne x 3) and lateral areas per half-edge (Ne)
+    """
+    edges = eptm.edge_df
+    offsets = basal_offsets(eptm)
+    srcePosition = eptm.vert_df.index.get_indexer(edges["srce"])
+    trgtPosition = eptm.vert_df.index.get_indexer(edges["trgt"])
+    height = eptm.upcast_face(eptm.face_df["height"]).to_numpy()
+    edgeVector = edges[["dx", "dy"]].to_numpy()
+
+    diagonal1 = np.column_stack([edgeVector - offsets[trgtPosition], -height])
+    diagonal2 = np.column_stack([edgeVector + offsets[srcePosition], height])
+    cross = np.cross(diagonal1, diagonal2)
+    tiltedFaceArea = 0.5 * np.linalg.norm(cross, axis=1)
+
+    basalEdgeLength = np.linalg.norm(edgeVector - offsets[trgtPosition] + offsets[srcePosition], axis=1)
+    apicalEdgeLength = np.linalg.norm(edgeVector, axis=1)
+    return diagonal1, diagonal2, cross, tiltedFaceArea + 0.5 * height * (apicalEdgeLength - basalEdgeLength)
+
+
+class TiltedLateralAreaElasticity(AbstractEffector):
+    """
+    Elasticity of the lateral area of each cell when its lateral faces can tilt: the apical
+    vertices move, the basal ones stay where they were anchored (vert_df 'basal_x', 'basal_y',
+    set at the ablation). The lateral area grows when the apical vertices move away from their
+    basal ones, so the recoil of the apical surface is resisted by the tilted lateral faces:
+        E = 1/2 lateral_elasticity (h P + tilt extra area - prefered_lateral_area)^2
+    (see tilted_lateral_faces)
+    Before the anchoring, it is the same as LateralAreaElasticity. Only in-plane forces: use it
+    with a fixed height
+    """
+
+    label = "Tilted lateral area elasticity"
+    element = "face"
+    magnitude = "lateral_elasticity"
+    specs = {
+        "face": {"is_alive": 1, "lateral_elasticity": 1.0, "prefered_lateral_area": 1.0},
+        "vert": {"basal_x": 0.0, "basal_y": 0.0},
+        "settings": {"basal_anchored": False},
+    }
+
+    @staticmethod
+    def lateral_area(eptm, faceAreas=None):
+        """Lateral area of each cell: sum of the areas of its lateral faces"""
+        if faceAreas is None:
+            _, _, _, faceAreas = tilted_lateral_faces(eptm)
+        return pd.Series(faceAreas, index=eptm.edge_df.index).groupby(eptm.edge_df["face"]).sum()
+
+    @staticmethod
+    def energy(eptm):
+        if not eptm.settings.get("basal_anchored", False):
+            return LateralAreaElasticity.energy(eptm)
+        df = eptm.face_df
+        lateralArea = TiltedLateralAreaElasticity.lateral_area(eptm)
+        return 0.5 * df["is_alive"] * df["lateral_elasticity"] * (lateralArea - df["prefered_lateral_area"]) ** 2
+
+    @staticmethod
+    def gradient(eptm):
+        if not eptm.settings.get("basal_anchored", False):
+            return LateralAreaElasticity.gradient(eptm)
+        df = eptm.face_df
+        diagonal1, diagonal2, cross, faceAreas = tilted_lateral_faces(eptm)
+        lateralArea = TiltedLateralAreaElasticity.lateral_area(eptm, faceAreas)
+        dE_dLateral = eptm.upcast_face(
+            df["is_alive"] * df["lateral_elasticity"] * (lateralArea - df["prefered_lateral_area"])).to_numpy()
+
+        # Tilted face: d|D1 x D2| = dD1 . (D2 x n) + dD2 . (n x D1). With anchored basal vertices,
+        # D1 = basal_t - apical_s only depends on the source and D2 = apical_t - basal_s on the target
+        normal = cross / np.linalg.norm(cross, axis=1)[:, None]
+        grad_srce = -0.5 * np.cross(diagonal2, normal)
+        grad_trgt = 0.5 * np.cross(normal, diagonal1)
+        # + h/2 |e|: the apical edge length pulls along the edge (the basal edge is fixed)
+        halfHeight = 0.5 * eptm.upcast_face(df["height"]).to_numpy()[:, None]
+        unit = np.column_stack([eptm.edge_df[["ux", "uy"]].to_numpy(), np.zeros(eptm.Ne)])
+        grad_srce = (grad_srce - halfHeight * unit) * dE_dLateral[:, None]
+        grad_trgt = (grad_trgt + halfHeight * unit) * dE_dLateral[:, None]
+        grad_srce[:, 2] = 0.0  # fixed height
+        grad_trgt[:, 2] = 0.0
+
+        columns = ["g" + c for c in eptm.coords]
+        return (pd.DataFrame(grad_srce, index=eptm.edge_df.index, columns=columns),
+                pd.DataFrame(grad_trgt, index=eptm.edge_df.index, columns=columns))
+
+
+def anchor_basal_vertices(eptm):
+    """Fix the basal vertices under the current apical ones: from now on, the lateral faces tilt"""
+    eptm.vert_df["basal_x"] = eptm.vert_df["x"]
+    eptm.vert_df["basal_y"] = eptm.vert_df["y"]
+    eptm.settings["basal_anchored"] = True
 
 
 def wound_edge_tension(eptm):

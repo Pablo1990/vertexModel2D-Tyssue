@@ -2,6 +2,8 @@ import numpy as np
 
 import src.auxFunctions as auxFunctions
 
+DEFAULT_DT = 0.01  # minutes
+
 def update(cellmap, cell_height=15.0, params=None):
     """
     Set the default mechanical parameters
@@ -21,7 +23,7 @@ def update(cellmap, cell_height=15.0, params=None):
     cellmap.settings["TInitAblation"] = 20.0 # minutes
     cellmap.settings["TEndAblation"] = 80.0 # minutes
     cellmap.settings["tend"] = 80.0 # minutes
-    cellmap.settings["dt"] = 0.01 # minutes
+    cellmap.settings["dt"] = DEFAULT_DT
     cellmap.settings["record_every"] = 1 # minutes
 
     # Wound contractility (TypeOfPurseString 0 = intensity-based profile)
@@ -57,7 +59,7 @@ def update(cellmap, cell_height=15.0, params=None):
     if params:
         cellmap = set_parameters(cellmap, params)
 
-    if cellmap.settings.get("model") == "effective_2d":
+    if cellmap.settings.get("model") in ("effective_2d", "effective_2d_tilted"):
         set_effective_2d_parameters(cellmap)
     else:
         set_farhadifar_parameters(cellmap)
