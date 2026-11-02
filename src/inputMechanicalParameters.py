@@ -49,7 +49,7 @@ def update(cellmap, cell_height=15.0, params=None):
     # P0 = lateral_ref * the mean perimeter (as ref_A0 in the 3D model)
     cellmap.settings["cell_height"] = cell_height
     cellmap.settings["lambdaS"] = 1.0
-    cellmap.settings["lateral_ref"] = 0.95
+    cellmap.settings["lateral_ref"] = 0.8
     # SheetGeometry ('flat'): height = z - basal_shift, recomputed at every update
     cellmap.vert_df["basal_shift"] = cellmap.vert_df["z"] - cell_height
 

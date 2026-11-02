@@ -43,8 +43,8 @@ CALIBRATION = {
     vertexModel.FARHADIFAR: ('line_tension_norm', (1e-3, 1.0)),  # or 'contractility_norm', 'lambdaV'
     # Effective 2D models: lambdaS sets how fast the wound recoils (stiffness), lateral_ref how much
     # (the lateral area relaxes to lateral_ref * the initial one: the maximum wound opening)
-    vertexModel.EFFECTIVE_2D: ('lambdaS', (1e-2, 1e4)),  # or 'lambdaS', 'lambdaV'
-    vertexModel.EFFECTIVE_2D_TILTED: ('lambdaS', (1e-2, 1e3)),
+    vertexModel.EFFECTIVE_2D: ('lambdaS', (1e-2, 1e3)),  # or 'lambdaS', 'lambdaV'
+    vertexModel.EFFECTIVE_2D_TILTED: ('lambdaS', (1e-2, 1e4)),
 }
 CALIBRATED_PARAMETER, CALIBRATION_BOUNDS = CALIBRATION[MODEL]
 RESULTS_FOLDER = os.path.join('results', 'wound_healing', MODEL)
