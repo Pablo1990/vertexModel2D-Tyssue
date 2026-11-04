@@ -620,6 +620,10 @@ def wound_area_rate(cellMap, geom, energyContributions_model, woundTension, dtPr
     return (wound.wound_measures(probe)["wound_area"] - initialArea) / dtProbe
 
 
+# Result of required_purse_string, saved in each simulation (AR) folder
+REQUIRED_PURSE_STRING_FILE = "required_purse_string.json"
+
+
 def required_purse_string(cellMap, geom, energyContributions_model, timeAfterAblation=0.1):
     """
     Minimum purse string strength for the wound to start closing at timeAfterAblation,

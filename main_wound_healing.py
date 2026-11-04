@@ -31,6 +31,7 @@ PURSE_STRING_TIME = 0.1  # minutes after ablation where the required purse strin
 
 # Each height folder keeps what is needed to reproduce or continue its simulation:
 #   simulation.json                 inputs (height, height mode, tissue, seed, calibrated params)
+#   required_purse_string.json      recoil and purse string needed to start closing the wound
 #   relaxed_state.hf5 / _specs.json tissue before the ablation
 #   final_state.hf5 / _specs.json   tissue at the end of the wound healing
 # Load a state with: [cellMap, geom, model] = vertexModel.load_state(os.path.join(folder, 'relaxed_state'))
@@ -43,15 +44,15 @@ CALIBRATION = {
     vertexModel.FARHADIFAR: ('line_tension_norm', (1e-3, 1.0)),  # or 'contractility_norm', 'lambdaV'
     # Effective 2D models: lambdaS sets how fast the wound recoils (stiffness), lateral_ref how much
     # (the lateral area relaxes to lateral_ref * the initial one: the maximum wound opening)
-    vertexModel.EFFECTIVE_2D: ('lambdaS', (1e-2, 1e3)),  # or 'lambdaS', 'lambdaV'
-    vertexModel.EFFECTIVE_2D_TILTED: ('lambdaS', (1e-2, 1e4)),
+    vertexModel.EFFECTIVE_2D: ('lambdaS', (1e-3, 1e3)),  # or 'lambdaS', 'lambdaV'
+    vertexModel.EFFECTIVE_2D_TILTED: ('lambdaS', (1e-3, 1e3)),
 }
 CALIBRATED_PARAMETER, CALIBRATION_BOUNDS = CALIBRATION[MODEL]
 RESULTS_FOLDER = os.path.join('results', 'wound_healing', MODEL)
 TIME_AFTER_ABLATION = 6.0  # minutes, wound area compared at this time
 EDGE_RECOIL = 0.01
 
-def run_height(height, purse_strings):
+def run_height(height):
     """
     Calibrate (if not done yet), relax, compute the required purse string and simulate the
     wound healing for one height. Raises vertexModel.SimulationError if the simulation blew up
@@ -114,8 +115,8 @@ def run_height(height, purse_strings):
 
     # Purse string needed for the wound to start closing, PURSE_STRING_TIME minutes after ablation
     purse_string = vertexModel.required_purse_string(cellmap_relaxed, geom, model_relaxed, PURSE_STRING_TIME)
-    purse_strings.append({'height': height, **purse_string})
-    pd.DataFrame(purse_strings).to_csv(os.path.join(RESULTS_FOLDER, 'required_purse_string.csv'), index=False)
+    with open(os.path.join(output_folder, vertexModel.REQUIRED_PURSE_STRING_FILE), 'w') as f:
+        json.dump({'height': height, **purse_string}, f, indent=2)
     print(height, purse_string)
     print(height, relax_timecourse.iloc[[0, -1]][['time', 'height', 'area', 'aspect_ratio']].to_string(index=False))
 
@@ -139,14 +140,13 @@ def run_height(height, purse_strings):
     # auxFunctions.exportToMesh(history_H, './results')
 
 
-purse_strings = []
 failed_simulations = []
 for height in HEIGHTS:
     error_file = os.path.join(RESULTS_FOLDER, str(height), 'error.txt')
     if os.path.exists(error_file):
         os.remove(error_file)  # repeated now
     try:
-        run_height(height, purse_strings)
+        run_height(height)
     except vertexModel.SimulationError as error:
         # Marked as failed (error.txt and failed_simulations.csv): run again to repeat it
         print(f"---- Height {height} FAILED, repeat it: {error} ----")
